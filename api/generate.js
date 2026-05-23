@@ -1,31 +1,12 @@
 // Vercel Serverless Function — proxy ke Google Gemini API
 
-// Helper: parse WhatsApp-style markdown to inline HTML formatting
 function parseWhatsAppFormatting(text) {
   if (!text) return text;
-  
-  // WhatsApp markdown rules (apply in order, careful not to break each other):
-  // *bold*    -> <b>bold</b>
-  // _italic_  -> <i>italic</i>
-  // ~strike~  -> <s>strike</s>
-  // `code`    -> <code>code</code>
-  
-  // Use placeholder strategy to avoid conflicts
   let result = text;
-  
-  // Process code first (preserve its content)
   result = result.replace(/`([^`\n]+)`/g, '<code style="background:#F3F4F6;padding:2px 6px;border-radius:4px;font-size:0.9em">$1</code>');
-  
-  // Bold: *text* but not ** (which is sometimes used as emphasis markers)
-  // Pattern: asterisk, then non-space content (not asterisk), then asterisk
   result = result.replace(/(^|\s|>|\(|"|\[)\*([^\*\n]+?)\*(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<b>$2</b>');
-  
-  // Italic: _text_
   result = result.replace(/(^|\s|>|\(|"|\[)_([^_\n]+?)_(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<i>$2</i>');
-  
-  // Strikethrough: ~text~
   result = result.replace(/(^|\s|>|\(|"|\[)~([^~\n]+?)~(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<s>$2</s>');
-  
   return result;
 }
 
@@ -45,34 +26,100 @@ export default async function handler(req, res) {
     if (!text || !text.trim()) return res.status(400).json({ error: 'Text is required' });
 
     const splitInstruction = allowSplit
-      ? `4. Boleh pisahkan menjadi BEBERAPA SLIDE jika konten sangat panjang dan tidak muat dalam 1 slide IG 1080x1350 dengan font readable. Target: maksimal 2-4 slide kalau memang harus dipecah.`
-      : `4. PRIORITAS: muat dalam SATU SLIDE saja (1080x1350). Ringkas konten supaya cukup. Hanya pecah ke slide kedua kalau benar-benar tidak mungkin dimuat dalam 1 slide (mis. lebih dari 6 blocks atau teks sangat panjang). Default: 1 slide.`;
+      ? `MODE CAROUSEL: Boleh pisahkan menjadi BEBERAPA SLIDE jika konten panjang (target maksimal 3-5 slide).
 
-    const prompt = `Kamu adalah AI desainer konten edukasi kesehatan untuk Instagram (akun dr. Ardi Santoso, dokter spesialis anak).
+ATURAN KHUSUS CAROUSEL UNTUK REFERENSI:
+- Jika ada bagian referensi/sumber di input mentah, BUAT 1 SLIDE TERAKHIR KHUSUS dengan tipe "references" untuk referensi tersebut.
+- Slide ini akan dirender dengan layout khusus (judul besar "Referensi" + list bernomor).
+- Format slide referensi: { "isReferenceSlide": true, "title": "Referensi", "items": ["sumber 1", "sumber 2", ...] }
+- JANGAN tambahkan "footer" sama sekali pada output mode carousel — set "footer" = null. Referensi sudah dipindah ke slide khusus.
+- Slide regular lainnya tetap pakai format blocks biasa.`
+      : `MODE SINGLE: PRIORITAS UTAMA muat dalam SATU SLIDE saja. Ringkas konten supaya cukup.
 
-INPUT MENTAH dari user (mungkin dari WhatsApp dengan markdown *bold*, _italic_, ~strikethrough~, atau \`code\`, atau typo, struktur acak):
+UNTUK REFERENSI:
+- Jika input mentah punya bagian referensi/sumber eksplisit, masukkan ke "footer".
+- Jika tidak ada, set "footer" = null.`;
+
+    const prompt = `Kamu adalah AI desainer konten edukasi untuk Instagram akun @ardisantoso (dr. Ardi Santoso, spesialis anak).
+
+INPUT MENTAH (mungkin dari WhatsApp dengan markdown *bold*, _italic_, ~strike~, atau typo, struktur acak):
 """
 ${text}
 """
 
-TUGAS:
-1. Perbaiki SEMUA typo, ejaan EYD, dan tata bahasa Bahasa Indonesia.
-2. PERTAHANKAN markdown formatting WhatsApp yang sudah ada di input:
-   - *text* (bold) → biarkan tetap *text* di output
-   - _text_ (italic) → biarkan tetap _text_ di output
-   - ~text~ (strikethrough) → biarkan tetap ~text~ di output
-3. Tambahkan formatting markdown WhatsApp pada kata/frasa yang seharusnya ditekankan:
-   - *bold* untuk kata kunci penting, larangan, peringatan, definisi
-   - _italic_ untuk istilah asing (Latin, Inggris), nama produk, kutipan, atau penekanan halus
-   - Jangan berlebihan — fokus pada 2-5 kata per slide saja
-${splitInstruction}
-5. Identifikasi struktur konten dan PILIH SECARA CERDAS jenis block:
-   - "heading": judul utama slide (1 per slide, di awal, singkat & kuat, max 12 kata)
-   - "paragraph": penjelasan naratif (1-3 kalimat per paragraf)
-   - "bullets": daftar 3+ item (icon: check positif, x negatif, arrow-right netral, star highlight, warning peringatan)
-   - "callout": kotak penekanan untuk insight/kutipan penting (1-2 kalimat)
-6. Untuk paragraph dan bullets, tambahkan HIGHLIGHTS (stabilo) pada 1-3 frasa kunci yang paling penting (max 3 per slide total).
-7. Identifikasi referensi/sumber → masukkan ke "footer".
+PRINSIP DESAIN INTI — BACA BAIK-BAIK:
+
+Aturan utamanya: **STRUKTUR HARUS MENGIKUTI ISI**, bukan template yang dipaksakan. Konten yang sederhana tidak butuh banyak block. Konten yang kompleks butuh struktur yang tepat. JANGAN paksakan format "judul + paragraf + bullet + callout + footer" pada SEMUA konten.
+
+ATURAN BLOCK (gunakan dengan bijak, hanya jika BENAR-BENAR perlu):
+
+1. **HEADING — OPSIONAL, sering tidak perlu!**
+   - HANYA kasih heading kalau input mentah benar-benar punya kalimat pembuka yang berfungsi sebagai judul (singkat, kuat, statement utama)
+   - Kalau input cuma penjelasan/pernyataan biasa tanpa "judul" yang jelas, JANGAN buat heading
+   - Kalau ragu, lebih baik TIDAK pakai heading
+   - Contoh: input "Sirup pemanis untuk minum obat TIDAK dianjurkan. Apa bedanya..." → tidak butuh heading karena kalimat pertama sudah jadi statement utama (jadi paragraph saja)
+   - Contoh: input "MAKNA TERDALAM DARI IBADAH KURBAN" lalu penjelasan → heading cocok karena ada judul eksplisit
+
+2. **PARAGRAPH — paling sering digunakan**
+   - Untuk penjelasan naratif, statement, pernyataan
+   - 1-3 kalimat per paragraf
+   - Bisa berdiri sendiri tanpa heading
+
+3. **BULLETS — hanya kalau memang ada daftar**
+   - HANYA jika input punya minimal 3 poin yang sejenis (gejala, langkah, tips, dll)
+   - Kalau cuma 2 poin, lebih baik gabung jadi paragraph
+   - JANGAN paksakan bullets pada konten yang naratif
+
+4. **CALLOUT (kotak penekanan) — JARANG, hanya untuk kutipan/insight kunci**
+   - HANYA jika ada kutipan, kesimpulan kuat, atau insight yang benar-benar perlu dipisahkan secara visual dari sekitarnya
+   - JANGAN kasih callout pada penutup standar atau kalimat biasa
+   - 1 callout per slide maksimal, dan seringkali TIDAK perlu sama sekali
+   - Contoh cocok: "Mending pakai air buah alami atau air madu untuk minum obat" (alternatif/saran kuat) → callout cocok
+   - Contoh TIDAK cocok: "Sebab pada hakikatnya, apa pun yang kita miliki di dunia hanyalah titipan" (penutup naratif biasa) → cukup paragraph
+
+5. **FOOTER (catatan kaki) — HANYA kalau ada referensi/sumber eksplisit**
+   - Set footer = null KECUALI input punya bagian referensi yang jelas
+   - Indikator referensi: kata "Referensi:", "Sumber:", "Daftar pustaka:", daftar bernomor jurnal/pedoman/buku di akhir konten, sitasi seperti "(WHO, 2024)" dengan daftar di bawah
+   - Tanda tangan seperti "— dr. Ardi Santoso" BUKAN referensi, masukkan di akhir konten utama saja atau abaikan
+   - JANGAN buat-buat footer kalau memang tidak ada di input
+
+CONTOH KEPUTUSAN STRUKTUR:
+
+Contoh A — Input pendek pernyataan + alternatif:
+"Sirup pemanis untuk minum obat tidak dianjurkan. Apa bedanya dengan minuman pemanis buatan? Mending pakai air buah alami atau air madu."
+→ Struktur tepat: 1 paragraph (statement utama) + 1 paragraph (pertanyaan retoris) + 1 callout (alternatif kuat). TIDAK butuh heading, TIDAK butuh footer.
+
+Contoh B — Input dengan daftar gejala:
+"Hati-hati DBD pada anak. Gejala awal: demam tinggi mendadak, nyeri perut, mual muntah, bintik merah di kulit, lemas. Segera periksakan ke dokter."
+→ Struktur tepat: 1 paragraph (statement) + 1 bullets (gejala dengan warning icon) + 1 paragraph (call to action). TIDAK butuh heading (statement sudah jelas), TIDAK butuh callout, TIDAK butuh footer.
+
+Contoh C — Input dengan judul eksplisit + referensi:
+"DAFTAR Vitamin Anak: Mana yang Perlu Tiap Hari. 1. Vitamin D - setiap hari, terutama bayi ASI. 2. Zat Besi - setiap hari... Referensi: 1. AAP 2. IDAI"
+→ Struktur tepat: 1 heading + 1 bullets + footer berisi referensi. Heading dipakai karena ada judul eksplisit. Footer dipakai karena ada referensi eksplisit.
+
+FORMATTING WHATSAPP MARKDOWN:
+- PERTAHANKAN *bold*, _italic_, ~strike~ yang sudah ada di input
+- TAMBAHKAN *bold* pada 2-3 kata kunci paling penting per slide (larangan, definisi, peringatan utama)
+- TAMBAHKAN _italic_ pada istilah Latin/Inggris/nama produk
+- Jangan berlebihan
+
+HIGHLIGHT (STABILO) — terpisah dari bold/italic:
+- Untuk frasa yang ingin di-stabilo (bukan kata individual)
+- Maksimal 2-3 highlight per slide
+- Pilih warna sesuai konteks:
+  - #FECDD3 (pink) → peringatan, larangan, risiko
+  - #FEF3C7 (kuning) → penekanan, perhatian
+  - #D1FAE5 (hijau) → positif, rekomendasi
+  - #DBEAFE (biru) → fakta, info netral
+  - #E9D5FF (ungu) → solusi, alternatif
+  - #FED7AA (peach) → fokus utama
+
+SPLIT INSTRUCTION: ${splitInstruction}
+
+LAINNYA:
+- Perbaiki typo dan ejaan EYD
+- Konten ringkas, padat, buang kata tidak perlu
+- Jangan tambahkan info yang tidak ada di input
 
 FORMAT OUTPUT (JSON murni, tanpa markdown fence, tanpa penjelasan):
 
@@ -80,30 +127,27 @@ FORMAT OUTPUT (JSON murni, tanpa markdown fence, tanpa penjelasan):
   "slides": [
     {
       "blocks": [
-        { "type": "heading", "text": "..." },
-        { "type": "paragraph", "text": "teks bisa mengandung *bold* atau _italic_", "highlights": [{ "phrase": "frasa di teks (TANPA markdown)", "color": "#FECDD3" }] },
-        { "type": "bullets", "icon": "check|x|arrow-right|star|warning|heart", "items": ["item bisa *bold*", "item _italic_"] },
-        { "type": "callout", "text": "...", "bgColor": "#DBEAFE" }
+        // Susun block sesuai kebutuhan konten. Block yang tidak perlu, JANGAN dimasukkan.
+        // Jenis block: "heading" | "paragraph" | "bullets" | "callout"
+        { "type": "paragraph", "text": "teks bisa mengandung *bold* atau _italic_", "highlights": [{ "phrase": "frasa tanpa markdown", "color": "#FECDD3" }] }
       ]
+    },
+    // CONTOH SLIDE REFERENSI (HANYA di mode carousel, sebagai slide TERAKHIR):
+    {
+      "isReferenceSlide": true,
+      "title": "Referensi",
+      "items": ["American Academy of Pediatrics — Topik X", "WHO Guideline Y", "Jurnal Z (2024)"]
     }
   ],
-  "footer": "referensi atau catatan kaki kecil, atau null"
+  "footer": null
 }
 
-WARNA HIGHLIGHT:
-- #FECDD3 (pink) → peringatan, larangan, kata kunci risiko
-- #FEF3C7 (kuning) → penekanan, perhatian
-- #D1FAE5 (hijau) → hal positif, rekomendasi
-- #DBEAFE (biru) → informasi netral, fakta
-- #E9D5FF (ungu) → solusi, alternatif
-- #FED7AA (peach) → fokus utama
-
-ATURAN PENTING:
-- Heading PALING max 12 kata
-- Konten harus ringkas dan padat
-- Jika ada list 3+ item, GUNAKAN bullets
-- Jika ada penekanan/insight ringkas, GUNAKAN callout
-- Untuk highlights, "phrase" harus persis teks yang akan distabilo (tanpa tanda * atau _ markdown)
+PENTING: 
+- "footer" = null kalau tidak ada referensi/sumber eksplisit di input
+- DALAM MODE CAROUSEL: "footer" SELALU null. Referensi dipindah ke slide terakhir dengan "isReferenceSlide": true
+- DALAM MODE SINGLE: jika ada referensi, masukkan ke "footer"; tidak ada slide khusus untuk referensi
+- Blocks tidak harus selalu lengkap heading+paragraph+bullets+callout
+- Hanya pakai jenis block yang BENAR-BENAR sesuai konten
 
 Output HANYA JSON valid.`;
 
@@ -116,7 +160,7 @@ Output HANYA JSON valid.`;
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.7,
+          temperature: 0.6,
           maxOutputTokens: 4000,
           responseMimeType: 'application/json',
         }
@@ -138,20 +182,23 @@ Output HANYA JSON valid.`;
     try {
       const parsed = JSON.parse(clean);
       
-      // POST-PROCESS: apply WhatsApp markdown parsing to all text fields
+      // Post-process: apply WhatsApp markdown
       if (parsed.slides && Array.isArray(parsed.slides)) {
         parsed.slides.forEach(slide => {
           if (slide.blocks && Array.isArray(slide.blocks)) {
             slide.blocks.forEach(block => {
-              if (block.text) {
-                block.text = parseWhatsAppFormatting(block.text);
-              }
+              if (block.text) block.text = parseWhatsAppFormatting(block.text);
               if (block.items && Array.isArray(block.items)) {
                 block.items = block.items.map(item => parseWhatsAppFormatting(item));
               }
             });
           }
         });
+      }
+      
+      // Normalize footer: null/empty string/whitespace → null
+      if (!parsed.footer || !String(parsed.footer).trim()) {
+        parsed.footer = null;
       }
       
       return res.status(200).json(parsed);
