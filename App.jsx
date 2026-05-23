@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Check, X, ArrowRight, Circle, Star, Heart, AlertTriangle, 
   Download, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
   Type, List, MessageSquareQuote, Sparkles, User, Palette,
   Bold, Italic, FileText, Layers, Copy, Upload, Wand2, Edit3,
-  Settings, Menu, ChevronLeft, Smartphone, Monitor
+  Settings, Menu, ChevronLeft, Smartphone, Monitor,
+  ZoomIn, ZoomOut, Crop, Move, RotateCcw, BookOpen, AlertCircle
 } from 'lucide-react';
 
 // ============ KONSTAN ============
@@ -22,20 +23,17 @@ const FONT_OPTIONS = [
 
 const HIGHLIGHT_PRESETS = [
   { name: 'Pink', color: '#FECDD3' },
+  { name: 'Pink Tua', color: '#FBA5C2' },
   { name: 'Kuning', color: '#FEF3C7' },
+  { name: 'Kuning Tua', color: '#FDE68A' },
   { name: 'Hijau', color: '#D1FAE5' },
+  { name: 'Hijau Tua', color: '#A7F3D0' },
   { name: 'Biru', color: '#DBEAFE' },
+  { name: 'Biru Tua', color: '#BFDBFE' },
   { name: 'Ungu', color: '#E9D5FF' },
+  { name: 'Ungu Tua', color: '#D8B4FE' },
   { name: 'Peach', color: '#FED7AA' },
-];
-
-const BG_PRESETS = [
-  { name: 'Putih', value: '#FFFFFF' },
-  { name: 'Krem', value: '#FFF9F0' },
-  { name: 'Abu Soft', value: '#F5F5F4' },
-  { name: 'Pink Pastel', value: '#FFF1F2' },
-  { name: 'Biru Pastel', value: '#EFF6FF' },
-  { name: 'Hijau Pastel', value: '#F0FDF4' },
+  { name: 'Abu', color: '#E5E7EB' },
 ];
 
 const BULLET_ICONS = {
@@ -54,12 +52,17 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Default global settings
 const DEFAULT_SETTINGS = {
-  paddingX: 96,        // jarak kiri-kanan
-  paddingTop: 72,      // jarak dari atas (username area)
-  gapAfterHeader: 48,  // jarak username ke konten (= jarak footer ke konten) - lebih dekat
-  lineHeight: 1.3,     // line height global
-  blockGap: 28,        // jarak antar block
+  paddingX: 96,           // jarak konten ke pinggir kiri/kanan canvas
+  edgeTop: 80,            // jarak username ke pinggir atas canvas (fixed margin)
+  edgeBottom: 80,         // jarak footer/area bawah ke pinggir bawah canvas (fixed margin)
+  gapAfterHeader: 64,     // JARAK USERNAME → KONTEN (= jarak konten → footer, simetris)
+  lineHeight: 1.3,
+  blockGap: 28,
 };
+
+// Default ukuran konten
+const DEFAULT_CONTENT_SIZE = 40;
+const MIN_CONTENT_SIZE = 24;
 
 // Default starter blocks
 const defaultBlocks = () => [
@@ -76,10 +79,10 @@ const defaultBlocks = () => [
   {
     id: uid(),
     type: 'paragraph',
-    text: 'Secara ilmiah, terapi gurah lendir <mark style="background:#FECDD3; padding:2px 8px; border-radius:4px">TIDAK direkomendasikan</mark> sebagai terapi standar medis.',
+    text: 'Secara ilmiah, terapi gurah lendir <mark style="background:#FECDD3; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">TIDAK direkomendasikan</mark> sebagai terapi standar medis.',
     font: 'Montserrat',
     color: '#111827',
-    size: 32,
+    size: 40,
     weight: 400,
     align: 'left',
   },
@@ -91,7 +94,7 @@ const defaultBlocks = () => [
     items: ['Iritasi & trauma mukosa', 'Mimisan', 'Infeksi', 'Gangguan telinga/sinus'],
     font: 'Montserrat',
     color: '#111827',
-    size: 30,
+    size: 40,
     weight: 400,
   },
   {
@@ -102,10 +105,220 @@ const defaultBlocks = () => [
     borderColor: '#3B82F6',
     color: '#111827',
     font: 'Montserrat',
-    size: 30,
+    size: 40,
     weight: 400,
   },
 ];
+
+// ============ KOMPONEN: Image Cropper Modal ============
+// Drag untuk pan + slider untuk zoom (Instagram-style)
+function ImageCropper({ imageSrc, aspectRatio, shape, onSave, onCancel, initialCrop }) {
+  const [scale, setScale] = useState(initialCrop?.scale || 1);
+  const [offsetX, setOffsetX] = useState(initialCrop?.offsetX || 0);
+  const [offsetY, setOffsetY] = useState(initialCrop?.offsetY || 0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, offX: 0, offY: 0 });
+  const imgRef = useRef(null);
+  const containerRef = useRef(null);
+  const [imgDims, setImgDims] = useState({ w: 0, h: 0 });
+  
+  // Container size — kotak preview (responsive)
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 600;
+  const containerW = isMobile ? 280 : 420;
+  const containerH = containerW / aspectRatio;
+  
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setImgDims({ w: img.naturalWidth, h: img.naturalHeight });
+    img.src = imageSrc;
+  }, [imageSrc]);
+  
+  // Calculate base scale to "cover" the container at scale=1
+  const baseScale = imgDims.w && imgDims.h
+    ? Math.max(containerW / imgDims.w, containerH / imgDims.h)
+    : 1;
+  
+  const displayW = imgDims.w * baseScale * scale;
+  const displayH = imgDims.h * baseScale * scale;
+  
+  // Clamp offsets so image always covers container
+  const clampOffsets = (x, y) => {
+    const maxX = Math.max(0, (displayW - containerW) / 2);
+    const maxY = Math.max(0, (displayH - containerH) / 2);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, x)),
+      y: Math.max(-maxY, Math.min(maxY, y)),
+    };
+  };
+  
+  const handlePointerDown = (e) => {
+    setIsDragging(true);
+    const pt = e.touches ? e.touches[0] : e;
+    dragStartRef.current = { x: pt.clientX, y: pt.clientY, offX: offsetX, offY: offsetY };
+  };
+  
+  const handlePointerMove = (e) => {
+    if (!isDragging) return;
+    e.preventDefault();
+    const pt = e.touches ? e.touches[0] : e;
+    const dx = pt.clientX - dragStartRef.current.x;
+    const dy = pt.clientY - dragStartRef.current.y;
+    const { x, y } = clampOffsets(dragStartRef.current.offX + dx, dragStartRef.current.offY + dy);
+    setOffsetX(x);
+    setOffsetY(y);
+  };
+  
+  const handlePointerUp = () => setIsDragging(false);
+  
+  useEffect(() => {
+    if (!isDragging) return;
+    const moveHandler = (e) => handlePointerMove(e);
+    const upHandler = () => handlePointerUp();
+    window.addEventListener('mousemove', moveHandler);
+    window.addEventListener('mouseup', upHandler);
+    window.addEventListener('touchmove', moveHandler, { passive: false });
+    window.addEventListener('touchend', upHandler);
+    return () => {
+      window.removeEventListener('mousemove', moveHandler);
+      window.removeEventListener('mouseup', upHandler);
+      window.removeEventListener('touchmove', moveHandler);
+      window.removeEventListener('touchend', upHandler);
+    };
+  }, [isDragging, offsetX, offsetY]);
+  
+  // When scale changes, re-clamp offsets
+  useEffect(() => {
+    const { x, y } = clampOffsets(offsetX, offsetY);
+    if (x !== offsetX) setOffsetX(x);
+    if (y !== offsetY) setOffsetY(y);
+  }, [scale, imgDims]);
+  
+  const handleSave = () => {
+    // Crop the image based on current view
+    if (!imgDims.w) return onCancel();
+    
+    // Output canvas size — keep good quality
+    const outputW = shape === 'circle' ? 400 : Math.max(800, containerW * 2);
+    const outputH = outputW / aspectRatio;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = outputW;
+    canvas.height = outputH;
+    const ctx = canvas.getContext('2d');
+    
+    // Background white for transparent images
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, outputW, outputH);
+    
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      // Map preview coordinates to output coordinates
+      const scaleRatio = outputW / containerW;
+      const drawW = displayW * scaleRatio;
+      const drawH = displayH * scaleRatio;
+      const drawX = (outputW - drawW) / 2 + offsetX * scaleRatio;
+      const drawY = (outputH - drawH) / 2 + offsetY * scaleRatio;
+      
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      
+      const dataUrl = canvas.toDataURL('image/png', 0.92);
+      onSave({
+        src: dataUrl,
+        crop: { scale, offsetX, offsetY, original: imageSrc }
+      });
+    };
+    img.src = imageSrc;
+  };
+  
+  const reset = () => { setScale(1); setOffsetX(0); setOffsetY(0); };
+  
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16,
+    }}>
+      <div style={{
+        background: '#1E293B', padding: 20, borderRadius: 16, maxWidth: '100%',
+        border: '1px solid #475569',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <Crop size={20} color="#60A5FA" />
+          <div style={{ fontWeight: 700, fontSize: 16, color: '#F1F5F9' }}>Atur Crop Gambar</div>
+        </div>
+        <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <Move size={12} /> Geser untuk pindah · scroll untuk zoom
+        </div>
+        
+        {/* Preview area */}
+        <div
+          ref={containerRef}
+          onMouseDown={handlePointerDown}
+          onTouchStart={handlePointerDown}
+          onWheel={(e) => { e.preventDefault(); setScale(s => Math.max(1, Math.min(4, s + (e.deltaY < 0 ? 0.1 : -0.1)))); }}
+          style={{
+            width: containerW, height: containerH,
+            overflow: 'hidden', position: 'relative',
+            background: '#0F172A', borderRadius: shape === 'circle' ? '50%' : (shape === 'rounded' ? 14 : 4),
+            cursor: isDragging ? 'grabbing' : 'grab',
+            userSelect: 'none', touchAction: 'none',
+            margin: '0 auto',
+          }}
+        >
+          {imgDims.w > 0 && (
+            <img
+              ref={imgRef}
+              src={imageSrc}
+              alt=""
+              draggable={false}
+              style={{
+                position: 'absolute',
+                width: displayW, height: displayH,
+                left: `calc(50% - ${displayW / 2}px + ${offsetX}px)`,
+                top: `calc(50% - ${displayH / 2}px + ${offsetY}px)`,
+                maxWidth: 'none',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+        </div>
+        
+        {/* Zoom slider */}
+        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <ZoomOut size={16} color="#94A3B8" />
+          <input
+            type="range"
+            min={1} max={4} step={0.05}
+            value={scale}
+            onChange={(e) => setScale(Number(e.target.value))}
+            style={{ flex: 1, accentColor: '#3B82F6' }}
+          />
+          <ZoomIn size={16} color="#94A3B8" />
+          <button onClick={reset} style={{
+            background: '#334155', color: '#E2E8F0', border: 'none',
+            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }} title="Reset">
+            <RotateCcw size={14} />
+          </button>
+        </div>
+        
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+          <button onClick={onCancel} style={{
+            padding: '9px 16px', background: '#334155', color: '#E2E8F0',
+            border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13,
+          }}>Batal</button>
+          <button onClick={handleSave} style={{
+            padding: '9px 18px', background: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+            color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}><Check size={14} /> Simpan</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ============ KOMPONEN: Render Block ============
 function RenderBlock({ block, settings }) {
@@ -161,12 +374,30 @@ function RenderBlock({ block, settings }) {
   }
   if (block.type === 'image') {
     const radius = block.shape === 'rounded' ? 20 : block.shape === 'circle' ? 9999 : 0;
+    
+    // Map align ke justifyContent flex
+    const justifyMap = { left: 'flex-start', center: 'center', right: 'flex-end' };
+    const justify = justifyMap[block.align] || 'center';
+    
+    // Stroke (border) — opsional
+    const strokeStyle = block.strokeEnabled
+      ? `${block.strokeWidth || 4}px solid ${block.strokeColor || '#111827'}`
+      : 'none';
+    
+    // Shadow — opsional, soft drop shadow
+    const shadowStyle = block.shadowEnabled
+      ? `0 ${(block.shadowSize || 8)}px ${(block.shadowSize || 8) * 3}px rgba(0,0,0,${block.shadowOpacity || 0.15})`
+      : 'none';
+    
     return (
-      <div style={{ marginBottom: settings.blockGap, display: 'flex', justifyContent: block.align || 'center' }}>
+      <div style={{ marginBottom: settings.blockGap, display: 'flex', justifyContent: justify }}>
         <img src={block.src} alt="" style={{
           maxWidth: '100%', width: block.width || '70%',
           aspectRatio: block.aspectRatio || 'auto', objectFit: 'cover',
           borderRadius: radius,
+          border: strokeStyle,
+          boxShadow: shadowStyle,
+          display: 'block',
         }} />
       </div>
     );
@@ -174,9 +405,74 @@ function RenderBlock({ block, settings }) {
   return null;
 }
 
+// ============ KOMPONEN: Reference Slide Body ============
+// Layout khusus untuk slide terakhir di carousel berisi referensi
+function ReferenceSlideBody({ slide, settings }) {
+  const title = slide.refTitle || 'Referensi';
+  const items = slide.refItems || [];
+  
+  return (
+    <div>
+      {/* Icon + Title */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 40 }}>
+        <div style={{
+          width: 80, height: 80, borderRadius: 20,
+          background: 'linear-gradient(135deg, #DBEAFE, #BFDBFE)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#1E40AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+          </svg>
+        </div>
+        <div style={{
+          fontSize: 72, fontWeight: 800, color: '#1E40AF',
+          fontFamily: "'Montserrat', sans-serif", lineHeight: 1,
+        }}>
+          {title}
+        </div>
+      </div>
+      
+      {/* Numbered list */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {items.map((item, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12,
+              background: '#1E40AF', color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 800, fontSize: 22, flexShrink: 0,
+              fontFamily: "'Montserrat', sans-serif",
+            }}>
+              {i + 1}
+            </div>
+            <div style={{
+              fontSize: 28, color: '#111827', lineHeight: 1.4,
+              fontFamily: "'Montserrat', sans-serif", paddingTop: 6,
+            }} dangerouslySetInnerHTML={{ __html: item }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ============ KOMPONEN: Slide Canvas ============
 const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIndex, totalPages }, ref) => {
-  const hasFooter = footer && footer.trim();
+  const hasFooter = footer && footer.trim() && totalPages === 1 && !slide.isReferenceSlide;
+  
+  // ===== HITUNG TINGGI HEADER & FOOTER =====
+  // Header tinggi tetap: edgeTop + tinggi avatar (64px)
+  const headerH = settings.edgeTop + 64;
+  // Footer tinggi: edgeBottom + tinggi teks footer estimasi (jika ada)
+  const footerH = hasFooter
+    ? settings.edgeBottom + Math.max(60, String(footer).split('\n').length * 28)
+    : settings.edgeBottom;
+  
+  // Area tengah untuk konten — tinggi tersedia setelah header dan footer
+  // gapAfterHeader = jarak konten ke header DAN ke footer (simetris)
+  const contentAreaTop = headerH + settings.gapAfterHeader;
+  const contentAreaBottom = footerH + settings.gapAfterHeader;
   
   return (
     <div
@@ -190,9 +486,9 @@ const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIn
         fontFamily: "'Montserrat', sans-serif",
       }}
     >
-      {/* Header identity */}
+      {/* Header identity — fixed di atas */}
       <div style={{ 
-        padding: `${settings.paddingTop}px ${settings.paddingX}px 0`, 
+        position: 'absolute', top: settings.edgeTop, left: settings.paddingX, right: settings.paddingX,
         display: 'flex', alignItems: 'center', gap: 16,
       }}>
         <div style={{
@@ -212,22 +508,37 @@ const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIn
         )}
       </div>
 
-      {/* Body — flow natural dari atas, dengan jarak konsisten ke header */}
+      {/* Body — center vertically dalam area tengah, dengan gap simetris ke header dan footer */}
       <div style={{ 
-        padding: `${settings.gapAfterHeader}px ${settings.paddingX}px ${settings.gapAfterHeader}px`,
+        position: 'absolute',
+        top: contentAreaTop,
+        bottom: contentAreaBottom,
+        left: settings.paddingX,
+        right: settings.paddingX,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
       }}>
-        {slide.blocks.map(block => (
-          <RenderBlock key={block.id} block={block} settings={settings} />
-        ))}
+        {slide.isReferenceSlide ? (
+          <div data-slide-body>
+            <ReferenceSlideBody slide={slide} settings={settings} />
+          </div>
+        ) : (
+          <div data-slide-body>
+            {slide.blocks.map(block => (
+              <RenderBlock key={block.id} block={block} settings={settings} />
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Footer — posisi absolute di bawah dengan jarak yang sama (gapAfterHeader) dari konten */}
+      {/* Footer — fixed di bawah */}
       {hasFooter && (
         <div style={{
           position: 'absolute',
           left: settings.paddingX,
           right: settings.paddingX,
-          bottom: settings.paddingTop,
+          bottom: settings.edgeBottom,
           fontSize: 18, color: '#6B7280', fontStyle: 'italic',
           lineHeight: 1.5, whiteSpace: 'pre-line',
           fontFamily: "'Montserrat', sans-serif",
@@ -275,6 +586,10 @@ export default function App() {
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiAllowSplit, setAiAllowSplit] = useState(false); // default: 1 slide saja
   const [aiError, setAiError] = useState('');
+  const [overflowPopup, setOverflowPopup] = useState(null);
+  const [convertingBlock, setConvertingBlock] = useState(null); // blockId yang lagi dalam proses convert
+  const [convertTargetType, setConvertTargetType] = useState('paragraph'); // dropdown value
+  // { onShrink: () => void, onSplit: () => void }
 
   const canvasRefs = useRef({});
 
@@ -302,6 +617,106 @@ export default function App() {
 
   const currentSlide = slides[activeSlide];
   const selectedBlock = currentSlide?.blocks.find(b => b.id === selectedBlockId);
+  
+  // Sync convertTargetType ke jenis valid (yang beda dari selectedBlock.type)
+  useEffect(() => {
+    if (selectedBlock && selectedBlock.type === convertTargetType) {
+      const alternatives = ['paragraph', 'bullets', 'callout', 'heading'].filter(t => t !== selectedBlock.type);
+      setConvertTargetType(alternatives[0]);
+    }
+  }, [selectedBlock?.type]);
+  
+  // ===== Overflow detection + Auto-shrink =====
+  // Strategi: 
+  // 1. Kalau konten > canvas, auto-shrink secara silent (font menyesuaikan)
+  // 2. Kalau sudah di MIN_CONTENT_SIZE tapi masih overflow → munculkan popup pilihan
+  
+  const lastShrinkRef = useRef({ slideId: null, attempted: false });
+  
+  useEffect(() => {
+    if (!currentSlide || currentSlide.isReferenceSlide) return;
+    if (overflowPopup) return;
+    
+    const timer = setTimeout(() => {
+      const node = canvasRefs.current[activeSlide];
+      if (!node) return;
+      
+      const bodyDiv = node.querySelector('[data-slide-body]');
+      if (!bodyDiv) return;
+      
+      // Tinggi konten asli
+      const bodyContentH = bodyDiv.scrollHeight;
+      // Tinggi area yang tersedia (parent dari bodyDiv)
+      const parentDiv = bodyDiv.parentElement;
+      if (!parentDiv) return;
+      const availableH = parentDiv.clientHeight;
+      
+      if (bodyContentH > availableH + 4) {
+        // Konten overflow!
+        const minSize = Math.min(...currentSlide.blocks
+          .filter(b => b.type !== 'image' && b.size)
+          .map(b => b.size));
+        
+        if (minSize > MIN_CONTENT_SIZE) {
+          // Masih bisa shrink — auto shrink
+          const ratio = Math.max(0.9, availableH / bodyContentH); // shrink bertahap
+          autoShrink(ratio);
+        } else if (!lastShrinkRef.current.attempted || lastShrinkRef.current.slideId !== currentSlide.id) {
+          // Sudah di minimum tapi masih overflow → popup
+          lastShrinkRef.current = { slideId: currentSlide.id, attempted: true };
+          setOverflowPopup({
+            onShrink: () => autoShrink(availableH / bodyContentH, true),
+            onSplit: () => splitCurrentSlide(),
+          });
+        }
+      } else {
+        // Tidak overflow lagi
+        lastShrinkRef.current = { slideId: currentSlide.id, attempted: false };
+      }
+    }, 300);
+    
+    return () => clearTimeout(timer);
+  }, [currentSlide, settings, footer, slides.length, activeSlide]);
+  
+  const autoShrink = (ratio, force = false) => {
+    if (!currentSlide || currentSlide.isReferenceSlide) return;
+    const minSize = force ? 16 : MIN_CONTENT_SIZE;
+    setSlides(slides.map((s, i) => {
+      if (i !== activeSlide) return s;
+      return {
+        ...s,
+        blocks: s.blocks.map(b => {
+          if (b.type === 'image' || !b.size) return b;
+          const newSize = Math.max(minSize, Math.floor(b.size * ratio));
+          return { ...b, size: newSize };
+        }),
+      };
+    }));
+  };
+  
+  const splitCurrentSlide = () => {
+    if (!currentSlide || currentSlide.isReferenceSlide) return;
+    const blocks = currentSlide.blocks;
+    if (blocks.length < 2) return;
+    
+    const mid = Math.ceil(blocks.length / 2);
+    const firstHalf = blocks.slice(0, mid);
+    const secondHalf = blocks.slice(mid);
+    
+    // Reset font size pada slide baru ke default
+    const resetBlocks = (bs) => bs.map(b => {
+      if (b.type === 'image' || !b.size) return b;
+      // Heading tetap besar
+      if (b.type === 'heading') return { ...b, size: 60 };
+      return { ...b, size: DEFAULT_CONTENT_SIZE };
+    });
+    
+    const newSlide = { id: uid(), bg: currentSlide.bg, blocks: resetBlocks(secondHalf) };
+    const newSlides = [...slides];
+    newSlides[activeSlide] = { ...currentSlide, blocks: resetBlocks(firstHalf) };
+    newSlides.splice(activeSlide + 1, 0, newSlide);
+    setSlides(newSlides);
+  };
 
   // ===== Slide ops =====
   const addSlide = () => {
@@ -334,9 +749,9 @@ export default function App() {
     const base = { font: 'Montserrat', color: '#111827' };
     let newBlock;
     if (type === 'heading') newBlock = { id: uid(), type: 'heading', text: 'Judul', size: 56, weight: 700, align: 'left', ...base };
-    else if (type === 'paragraph') newBlock = { id: uid(), type: 'paragraph', text: 'Paragraf...', size: 32, weight: 400, align: 'left', ...base };
-    else if (type === 'bullets') newBlock = { id: uid(), type: 'bullets', items: ['Poin 1', 'Poin 2'], icon: 'arrow-right', iconColor: '#16A34A', size: 30, weight: 400, ...base };
-    else if (type === 'callout') newBlock = { id: uid(), type: 'callout', text: 'Catatan penting', bgColor: '#DBEAFE', borderColor: '#3B82F6', size: 30, weight: 400, ...base };
+    else if (type === 'paragraph') newBlock = { id: uid(), type: 'paragraph', text: 'Paragraf...', size: DEFAULT_CONTENT_SIZE, weight: 400, align: 'left', ...base };
+    else if (type === 'bullets') newBlock = { id: uid(), type: 'bullets', items: ['Poin 1', 'Poin 2'], icon: 'arrow-right', iconColor: '#16A34A', size: DEFAULT_CONTENT_SIZE, weight: 400, ...base };
+    else if (type === 'callout') newBlock = { id: uid(), type: 'callout', text: 'Catatan penting', bgColor: '#DBEAFE', borderColor: '#3B82F6', size: DEFAULT_CONTENT_SIZE, weight: 400, ...base };
     else if (type === 'image') newBlock = { id: uid(), type: 'image', src: '', shape: 'rounded', width: '70%', align: 'center' };
 
     setSlides(slides.map((s, i) => i !== activeSlide ? s : { ...s, blocks: [...s.blocks, newBlock] }));
@@ -366,19 +781,82 @@ export default function App() {
   const clearFormatting = () => document.execCommand('removeFormat');
 
   // ===== Uploads =====
+  // Cropper state — buka cropper sebelum simpan ke profile/block
+  const [cropperState, setCropperState] = useState(null);
+  // { rawSrc, aspectRatio, shape, onSave: (data) => void }
+  
+  const openAvatarCropper = (rawSrc) => {
+    setCropperState({
+      rawSrc,
+      aspectRatio: 1,
+      shape: 'circle',
+      onSave: (data) => {
+        setProfile(p => ({ ...p, avatar: data.src, avatarCrop: data.crop }));
+        setCropperState(null);
+      },
+    });
+  };
+  
+  const openBlockImageCropper = (rawSrc, blockId, shape, aspectRatio = 16/9) => {
+    setCropperState({
+      rawSrc,
+      aspectRatio,
+      shape: shape || 'rounded',
+      onSave: (data) => {
+        updateBlock(blockId, { src: data.src, crop: data.crop, originalSrc: data.crop.original });
+        setCropperState(null);
+      },
+    });
+  };
+  
   const handleAvatarUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => setProfile({ ...profile, avatar: ev.target.result });
+    reader.onload = (ev) => openAvatarCropper(ev.target.result);
     reader.readAsDataURL(file);
+    e.target.value = ''; // allow re-upload same file
   };
   const handleImageUpload = (e, blockId) => {
     const file = e.target.files[0];
     if (!file) return;
+    const block = currentSlide.blocks.find(b => b.id === blockId);
     const reader = new FileReader();
-    reader.onload = (ev) => updateBlock(blockId, { src: ev.target.result });
+    reader.onload = (ev) => openBlockImageCropper(ev.target.result, blockId, block?.shape || 'rounded', 16/9);
     reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+  
+  // Re-crop existing image
+  const reCropAvatar = () => {
+    const src = profile.avatarCrop?.original || profile.avatar;
+    if (!src) return;
+    setCropperState({
+      rawSrc: src,
+      aspectRatio: 1,
+      shape: 'circle',
+      initialCrop: profile.avatarCrop,
+      onSave: (data) => {
+        setProfile(p => ({ ...p, avatar: data.src, avatarCrop: data.crop }));
+        setCropperState(null);
+      },
+    });
+  };
+  
+  const reCropBlockImage = (blockId) => {
+    const block = currentSlide.blocks.find(b => b.id === blockId);
+    if (!block || !block.src) return;
+    const src = block.originalSrc || block.crop?.original || block.src;
+    setCropperState({
+      rawSrc: src,
+      aspectRatio: 16/9,
+      shape: block.shape || 'rounded',
+      initialCrop: block.crop,
+      onSave: (data) => {
+        updateBlock(blockId, { src: data.src, crop: data.crop });
+        setCropperState(null);
+      },
+    });
   };
 
   // ===== AI Auto-layout =====
@@ -452,33 +930,47 @@ Output HANYA JSON valid.`;
       const parsed = await resp.json();
 
       // Convert parsed slides to app slides
-      const newSlides = parsed.slides.map(s => ({
-        id: uid(),
-        bg: '#FFFFFF',
-        blocks: s.blocks.map(b => {
-          if (b.type === 'heading') {
-            return { id: uid(), type: 'heading', text: b.text, font: 'Montserrat', color: '#7F1D1D', size: 60, weight: 800, align: 'left' };
-          }
-          if (b.type === 'paragraph') {
-            let text = b.text;
-            if (b.highlights && Array.isArray(b.highlights)) {
-              b.highlights.forEach(h => {
-                const re = new RegExp(h.phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
-                text = text.replace(re, `<mark style="background:${h.color}; padding:2px 8px; border-radius:4px">${h.phrase}</mark>`);
-              });
+      const newSlides = parsed.slides.map(s => {
+        // Special handling for reference slide
+        if (s.isReferenceSlide) {
+          return {
+            id: uid(),
+            bg: '#FFFFFF',
+            isReferenceSlide: true,
+            refTitle: s.title || 'Referensi',
+            refItems: s.items || [],
+            blocks: [],
+          };
+        }
+        
+        return {
+          id: uid(),
+          bg: '#FFFFFF',
+          blocks: s.blocks.map(b => {
+            if (b.type === 'heading') {
+              return { id: uid(), type: 'heading', text: b.text, font: 'Montserrat', color: '#7F1D1D', size: 60, weight: 800, align: 'left' };
             }
-            return { id: uid(), type: 'paragraph', text, font: 'Montserrat', color: '#111827', size: 32, weight: 400, align: 'left' };
-          }
-          if (b.type === 'bullets') {
-            const iconConf = BULLET_ICONS[b.icon] || BULLET_ICONS['arrow-right'];
-            return { id: uid(), type: 'bullets', items: b.items, icon: b.icon || 'arrow-right', iconColor: iconConf.color, font: 'Montserrat', color: '#111827', size: 30, weight: 400 };
-          }
-          if (b.type === 'callout') {
-            return { id: uid(), type: 'callout', text: b.text, bgColor: b.bgColor || '#DBEAFE', borderColor: '#3B82F6', font: 'Montserrat', color: '#111827', size: 30, weight: 400 };
-          }
-          return null;
-        }).filter(Boolean),
-      }));
+            if (b.type === 'paragraph') {
+              let text = b.text;
+              if (b.highlights && Array.isArray(b.highlights)) {
+                b.highlights.forEach(h => {
+                  const re = new RegExp(h.phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
+                  text = text.replace(re, `<mark style="background:${h.color}; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${h.phrase}</mark>`);
+                });
+              }
+              return { id: uid(), type: 'paragraph', text, font: 'Montserrat', color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400, align: 'left' };
+            }
+            if (b.type === 'bullets') {
+              const iconConf = BULLET_ICONS[b.icon] || BULLET_ICONS['arrow-right'];
+              return { id: uid(), type: 'bullets', items: b.items, icon: b.icon || 'arrow-right', iconColor: iconConf.color, font: 'Montserrat', color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400 };
+            }
+            if (b.type === 'callout') {
+              return { id: uid(), type: 'callout', text: b.text, bgColor: b.bgColor || '#DBEAFE', borderColor: '#3B82F6', font: 'Montserrat', color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400 };
+            }
+            return null;
+          }).filter(Boolean),
+        };
+      });
 
       setSlides(newSlides);
       setActiveSlide(0);
@@ -496,6 +988,72 @@ Output HANYA JSON valid.`;
   };
 
   // ===== EXPORT PNG =====
+  // ===== Convert block type via AI =====
+  const handleConvertBlock = async (blockId, targetType) => {
+    const block = currentSlide?.blocks.find(b => b.id === blockId);
+    if (!block) return;
+    if (block.type === targetType) {
+      setAiError('Block sudah berjenis ' + targetType);
+      return;
+    }
+    
+    setConvertingBlock(blockId);
+    setAiError('');
+    
+    try {
+      const resp = await fetch('/api/convert-block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ block, targetType }),
+      });
+      
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${resp.status}`);
+      }
+      
+      const newBlock = await resp.json();
+      
+      // Convert ke format internal app
+      let appBlock;
+      const base = { id: block.id, font: block.font || 'Montserrat' };
+      
+      if (newBlock.type === 'heading') {
+        appBlock = { ...base, type: 'heading', text: newBlock.text, color: '#7F1D1D', size: 60, weight: 800, align: 'left' };
+      } else if (newBlock.type === 'paragraph') {
+        let text = newBlock.text || '';
+        if (newBlock.highlights && Array.isArray(newBlock.highlights)) {
+          newBlock.highlights.forEach(h => {
+            const re = new RegExp(h.phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
+            text = text.replace(re, `<mark style="background:${h.color}; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${h.phrase}</mark>`);
+          });
+        }
+        appBlock = { ...base, type: 'paragraph', text, color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400, align: 'left' };
+      } else if (newBlock.type === 'bullets') {
+        const iconConf = BULLET_ICONS[newBlock.icon] || BULLET_ICONS['arrow-right'];
+        appBlock = { ...base, type: 'bullets', items: newBlock.items || [], icon: newBlock.icon || 'arrow-right', iconColor: iconConf.color, color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400 };
+      } else if (newBlock.type === 'callout') {
+        appBlock = { ...base, type: 'callout', text: newBlock.text, bgColor: newBlock.bgColor || '#DBEAFE', borderColor: '#3B82F6', color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400 };
+      } else {
+        throw new Error('Tipe block tidak dikenali: ' + newBlock.type);
+      }
+      
+      // Replace block in slides
+      setSlides(slides.map((s, i) => {
+        if (i !== activeSlide) return s;
+        return {
+          ...s,
+          blocks: s.blocks.map(b => b.id === blockId ? appBlock : b),
+        };
+      }));
+    } catch (err) {
+      console.error('Convert block error:', err);
+      setAiError('Gagal ubah block: ' + err.message);
+    } finally {
+      setConvertingBlock(null);
+    }
+  };
+  
   const exportSlide = async (slideIdx) => {
     const node = canvasRefs.current[slideIdx];
     if (!node) return;
@@ -580,7 +1138,7 @@ Output HANYA JSON valid.`;
         .scroll-thin::-webkit-scrollbar-track { background: #1E293B; }
         .scroll-thin::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         [contenteditable]:focus { outline: 2px solid #3B82F6; outline-offset: 2px; }
-        mark { padding: 2px 6px; border-radius: 4px; }
+        mark { padding: 4px 12px; border-radius: 999px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
         button { font-family: 'Montserrat', sans-serif; }
         input, select, textarea { font-family: 'Montserrat', sans-serif; }
       `}</style>
@@ -711,51 +1269,51 @@ Output HANYA JSON valid.`;
                 </label>
               </div>
             </div>
-
-            <SectionTitle icon={Palette} text="Background Slide" />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 18 }}>
-              {BG_PRESETS.map(bg => (
-                <button
-                  key={bg.value}
-                  onClick={() => {
-                    const newSlides = [...slides];
-                    newSlides[activeSlide] = { ...newSlides[activeSlide], bg: bg.value };
-                    setSlides(newSlides);
-                  }}
-                  style={{
-                    background: bg.value, height: 36, borderRadius: 6,
-                    border: currentSlide?.bg === bg.value ? '2px solid #3B82F6' : '1px solid #334155',
-                    cursor: 'pointer', fontSize: 9, color: '#0F172A', fontWeight: 700,
-                  }}
-                >
-                  {bg.name}
-                </button>
-              ))}
-            </div>
+            {profile.avatar && (
+              <button
+                onClick={reCropAvatar}
+                style={{
+                  ...inputStyle, background: '#334155', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  marginBottom: 14,
+                }}
+              >
+                <Crop size={12} /> Atur Crop Foto Profil
+              </button>
+            )}
 
             {/* GLOBAL SETTINGS */}
             <SectionTitle icon={Settings} text="Layout (Semua Slide)" />
             <SliderField
-              label="Margin Kiri/Kanan"
+              label="Margin Pinggir Kiri/Kanan"
               value={settings.paddingX}
               min={48} max={160} step={8}
               onChange={v => setSettings({ ...settings, paddingX: v })}
               unit="px"
             />
             <SliderField
-              label="Jarak Atas (Username)"
-              value={settings.paddingTop}
-              min={48} max={140} step={4}
-              onChange={v => setSettings({ ...settings, paddingTop: v })}
+              label="Margin Atas Canvas"
+              value={settings.edgeTop}
+              min={40} max={160} step={4}
+              onChange={v => setSettings({ ...settings, edgeTop: v })}
               unit="px"
+              hint="jarak username ke pinggir atas"
             />
             <SliderField
-              label="Jarak Header ↔ Konten"
+              label="Margin Bawah Canvas"
+              value={settings.edgeBottom}
+              min={40} max={160} step={4}
+              onChange={v => setSettings({ ...settings, edgeBottom: v })}
+              unit="px"
+              hint="jarak footer ke pinggir bawah"
+            />
+            <SliderField
+              label="Jarak Username ↔ Konten"
               value={settings.gapAfterHeader}
-              min={32} max={140} step={4}
+              min={24} max={200} step={4}
               onChange={v => setSettings({ ...settings, gapAfterHeader: v })}
               unit="px"
-              hint="= jarak footer ke konten"
+              hint="= jarak konten ke footer (simetris)"
             />
             <SliderField
               label="Spasi Baris (Line Height)"
@@ -888,7 +1446,7 @@ Output HANYA JSON valid.`;
 
               {/* Slide nav arrows for carousel preview */}
               {slides.length > 1 && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
                   <button
                     onClick={() => setActiveSlide(Math.max(0, activeSlide - 1))}
                     disabled={activeSlide === 0}
@@ -911,6 +1469,30 @@ Output HANYA JSON valid.`;
                   </button>
                 </div>
               )}
+              
+              {/* Tombol Tambah Slide — selalu tersedia di bawah preview */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <button
+                  onClick={addSlide}
+                  style={{
+                    background: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+                    color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 8,
+                    fontWeight: 600, cursor: 'pointer', fontSize: 13,
+                    display: 'flex', alignItems: 'center', gap: 5,
+                  }}
+                >
+                  <Plus size={14} /> Tambah Slide
+                </button>
+                {slides.length > 1 && (
+                  <button
+                    onClick={() => duplicateSlide(activeSlide)}
+                    style={{ ...navBtnStyle, background: '#475569' }}
+                    title="Duplicate slide ini"
+                  >
+                    <Copy size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> Duplicate
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -965,6 +1547,57 @@ Output HANYA JSON valid.`;
                 <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: '#F1F5F9', textTransform: 'uppercase' }}>
                   Edit {selectedBlock.type}
                 </div>
+                
+                {/* === UBAH JENIS BLOCK VIA AI === */}
+                {selectedBlock.type !== 'image' && (
+                  <div style={{
+                    marginBottom: 12, padding: 10, background: '#1E293B',
+                    borderRadius: 6, border: '1px solid #475569',
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Wand2 size={11} /> Ubah Jenis Block
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <select
+                        value={convertTargetType}
+                        onChange={e => setConvertTargetType(e.target.value)}
+                        style={{ ...inputStyle, flex: 1, fontSize: 12 }}
+                        disabled={convertingBlock === selectedBlock.id}
+                      >
+                        {['heading', 'paragraph', 'bullets', 'callout']
+                          .filter(t => t !== selectedBlock.type)
+                          .map(t => (
+                            <option key={t} value={t}>
+                              {t === 'heading' ? 'Judul' :
+                               t === 'paragraph' ? 'Paragraf' :
+                               t === 'bullets' ? 'Bullet List' : 'Callout'}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        onClick={() => handleConvertBlock(selectedBlock.id, convertTargetType)}
+                        disabled={convertingBlock === selectedBlock.id}
+                        style={{
+                          padding: '7px 10px',
+                          background: convertingBlock === selectedBlock.id 
+                            ? '#475569'
+                            : 'linear-gradient(135deg, #8B5CF6, #EC4899)',
+                          color: '#fff', border: 'none', borderRadius: 5,
+                          cursor: convertingBlock === selectedBlock.id ? 'wait' : 'pointer',
+                          fontSize: 11, fontWeight: 600,
+                          display: 'flex', alignItems: 'center', gap: 4,
+                        }}
+                      >
+                        {convertingBlock === selectedBlock.id ? '...' : <><Sparkles size={11} /> Ubah</>}
+                      </button>
+                    </div>
+                    {aiError && convertingBlock === null && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#FCA5A5' }}>
+                        {aiError}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {(selectedBlock.type === 'heading' || selectedBlock.type === 'paragraph' || selectedBlock.type === 'callout') && (
                   <>
@@ -974,15 +1607,34 @@ Output HANYA JSON valid.`;
                       <button onMouseDown={(e) => { e.preventDefault(); clearFormatting(); }} style={fmtBtn}>×</button>
                     </div>
                     <Label text="Stabilo (pilih teks dulu)" />
-                    <div style={{ display: 'flex', gap: 3, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 3, marginBottom: 6, flexWrap: 'wrap' }}>
                       {HIGHLIGHT_PRESETS.map(h => (
                         <button
                           key={h.color}
                           onMouseDown={(e) => { e.preventDefault(); applyHighlight(h.color); }}
-                          style={{ width: 26, height: 26, borderRadius: 5, background: h.color, border: 'none', cursor: 'pointer' }}
+                          style={{ width: 26, height: 26, borderRadius: 999, background: h.color, border: '1px solid #334155', cursor: 'pointer' }}
                           title={h.name}
                         />
                       ))}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, fontSize: 11, color: '#94A3B8' }}>
+                      <span>Custom:</span>
+                      <input
+                        type="color"
+                        onChange={(e) => applyHighlight(e.target.value)}
+                        style={{ width: 30, height: 26, border: 'none', borderRadius: 4, cursor: 'pointer', background: 'transparent' }}
+                        title="Pilih warna custom"
+                      />
+                      <button
+                        onMouseDown={(e) => { e.preventDefault(); applyHighlight('transparent'); }}
+                        style={{
+                          padding: '4px 8px', fontSize: 10, background: '#334155',
+                          color: '#E2E8F0', border: 'none', borderRadius: 4, cursor: 'pointer',
+                        }}
+                        title="Hapus stabilo dari teks terpilih"
+                      >
+                        Hapus
+                      </button>
                     </div>
 
                     <Label text="Teks" />
@@ -1094,6 +1746,18 @@ Output HANYA JSON valid.`;
                       onChange={e => handleImageUpload(e, selectedBlock.id)}
                       style={{ marginBottom: 8, fontSize: 11, color: '#CBD5E1' }}
                     />
+                    {selectedBlock.src && (
+                      <button
+                        onClick={() => reCropBlockImage(selectedBlock.id)}
+                        style={{
+                          ...inputStyle, background: '#334155', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Crop size={12} /> Atur Crop Gambar
+                      </button>
+                    )}
                     <Label text="Bentuk" />
                     <div style={{ display: 'flex', gap: 3, marginBottom: 8 }}>
                       {['sharp', 'rounded', 'circle'].map(s => (
@@ -1110,6 +1774,28 @@ Output HANYA JSON valid.`;
                         </button>
                       ))}
                     </div>
+                    
+                    <Label text="Posisi" />
+                    <div style={{ display: 'flex', gap: 3, marginBottom: 8 }}>
+                      {[
+                        { val: 'left', label: '← Kiri' },
+                        { val: 'center', label: '↔ Tengah' },
+                        { val: 'right', label: 'Kanan →' },
+                      ].map(a => (
+                        <button
+                          key={a.val}
+                          onClick={() => updateBlock(selectedBlock.id, { align: a.val })}
+                          style={{
+                            ...inputStyle,
+                            background: (selectedBlock.align || 'center') === a.val ? '#3B82F6' : '#334155',
+                            cursor: 'pointer', textAlign: 'center', fontSize: 11,
+                          }}
+                        >
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                    
                     <Label text="Lebar" />
                     <input
                       type="text"
@@ -1117,6 +1803,86 @@ Output HANYA JSON valid.`;
                       onChange={e => updateBlock(selectedBlock.id, { width: e.target.value })}
                       style={inputStyle}
                     />
+                    
+                    {/* === STROKE === */}
+                    <div style={{
+                      marginTop: 12, padding: 10, background: '#1E293B',
+                      borderRadius: 6, border: '1px solid #334155',
+                    }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#E2E8F0' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedBlock.strokeEnabled || false}
+                          onChange={e => updateBlock(selectedBlock.id, { strokeEnabled: e.target.checked })}
+                        />
+                        Bingkai (Stroke)
+                      </label>
+                      {selectedBlock.strokeEnabled && (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                            <span style={{ fontSize: 11, color: '#94A3B8', minWidth: 40 }}>Warna:</span>
+                            <input
+                              type="color"
+                              value={selectedBlock.strokeColor || '#111827'}
+                              onChange={e => updateBlock(selectedBlock.id, { strokeColor: e.target.value })}
+                              style={{ width: 32, height: 26, border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                            />
+                            <span style={{ fontSize: 11, color: '#94A3B8' }}>Tebal:</span>
+                            <input
+                              type="number"
+                              min={1} max={20}
+                              value={selectedBlock.strokeWidth || 4}
+                              onChange={e => updateBlock(selectedBlock.id, { strokeWidth: Number(e.target.value) })}
+                              style={{ ...inputStyle, width: 50, padding: '4px 6px' }}
+                            />
+                            <span style={{ fontSize: 10, color: '#64748B' }}>px</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    
+                    {/* === SHADOW === */}
+                    <div style={{
+                      marginTop: 8, padding: 10, background: '#1E293B',
+                      borderRadius: 6, border: '1px solid #334155',
+                    }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#E2E8F0' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedBlock.shadowEnabled || false}
+                          onChange={e => updateBlock(selectedBlock.id, { shadowEnabled: e.target.checked })}
+                        />
+                        Bayangan (Shadow)
+                      </label>
+                      {selectedBlock.shadowEnabled && (
+                        <>
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94A3B8', marginBottom: 2 }}>
+                              <span>Ukuran</span>
+                              <span>{selectedBlock.shadowSize || 8}px</span>
+                            </div>
+                            <input
+                              type="range" min={2} max={40} step={2}
+                              value={selectedBlock.shadowSize || 8}
+                              onChange={e => updateBlock(selectedBlock.id, { shadowSize: Number(e.target.value) })}
+                              style={{ width: '100%', accentColor: '#3B82F6' }}
+                            />
+                          </div>
+                          <div style={{ marginTop: 6 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94A3B8', marginBottom: 2 }}>
+                              <span>Kepekatan</span>
+                              <span>{Math.round((selectedBlock.shadowOpacity || 0.15) * 100)}%</span>
+                            </div>
+                            <input
+                              type="range" min={0.05} max={0.6} step={0.05}
+                              value={selectedBlock.shadowOpacity || 0.15}
+                              onChange={e => updateBlock(selectedBlock.id, { shadowOpacity: Number(e.target.value) })}
+                              style={{ width: '100%', accentColor: '#3B82F6' }}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </>
                 )}
 
@@ -1276,6 +2042,70 @@ Output HANYA JSON valid.`;
                 }}
               >
                 {isProcessingAI ? 'Memproses...' : <><Sparkles size={13} /> Generate</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* ===== IMAGE CROPPER MODAL ===== */}
+      {cropperState && (
+        <ImageCropper
+          imageSrc={cropperState.rawSrc}
+          aspectRatio={cropperState.aspectRatio}
+          shape={cropperState.shape}
+          initialCrop={cropperState.initialCrop}
+          onSave={cropperState.onSave}
+          onCancel={() => setCropperState(null)}
+        />
+      )}
+      
+      {/* ===== OVERFLOW POPUP ===== */}
+      {overflowPopup && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 150, padding: 16,
+        }}>
+          <div style={{
+            background: '#1E293B', padding: 20, borderRadius: 16, maxWidth: 420, width: '100%',
+            border: '1px solid #475569',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <AlertCircle size={20} color="#F59E0B" />
+              <div style={{ fontWeight: 700, fontSize: 16, color: '#F1F5F9' }}>Konten Melebihi Slide</div>
+            </div>
+            <p style={{ color: '#CBD5E1', fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
+              Konten slide ini lebih besar dari ukuran feed. Mau diapain?
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
+              <button
+                onClick={() => { overflowPopup.onShrink(); setOverflowPopup(null); }}
+                style={{
+                  padding: '12px 16px', background: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+                  color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}
+              >
+                <ZoomOut size={14} /> Kecilkan otomatis agar muat
+              </button>
+              <button
+                onClick={() => { overflowPopup.onSplit(); setOverflowPopup(null); }}
+                style={{
+                  padding: '12px 16px', background: 'linear-gradient(135deg, #8B5CF6, #EC4899)',
+                  color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}
+              >
+                <Plus size={14} /> Pisah ke slide baru
+              </button>
+              <button
+                onClick={() => setOverflowPopup(null)}
+                style={{
+                  padding: '10px 16px', background: '#334155', color: '#E2E8F0',
+                  border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13,
+                }}
+              >
+                Batal
               </button>
             </div>
           </div>
