@@ -55,10 +55,10 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // Default global settings
 const DEFAULT_SETTINGS = {
   paddingX: 96,        // jarak kiri-kanan
-  paddingTop: 80,      // jarak dari atas (username area)
-  gapAfterHeader: 64,  // jarak username ke konten (= jarak footer ke konten)
+  paddingTop: 72,      // jarak dari atas (username area)
+  gapAfterHeader: 48,  // jarak username ke konten (= jarak footer ke konten) - lebih dekat
   lineHeight: 1.3,     // line height global
-  blockGap: 32,        // jarak antar block
+  blockGap: 28,        // jarak antar block
 };
 
 // Default starter blocks
@@ -176,12 +176,7 @@ function RenderBlock({ block, settings }) {
 
 // ============ KOMPONEN: Slide Canvas ============
 const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIndex, totalPages }, ref) => {
-  // Hitung tinggi minimum untuk header dan footer
-  const headerH = 64 + 16; // tinggi avatar + line-height nama
-  const footerH = footer && footer.trim() ? Math.max(60, footer.split('\n').length * 22) : 0;
-  
-  // Konten body harus center-ish, dengan jarak sama dari atas-bawah konten
-  const symmetricGap = settings.gapAfterHeader;
+  const hasFooter = footer && footer.trim();
   
   return (
     <div
@@ -193,8 +188,6 @@ const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIn
         position: 'relative',
         overflow: 'hidden',
         fontFamily: "'Montserrat', sans-serif",
-        display: 'flex',
-        flexDirection: 'column',
       }}
     >
       {/* Header identity */}
@@ -219,24 +212,23 @@ const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIn
         )}
       </div>
 
-      {/* Body — center vertically, dengan jarak simetris dari header dan footer */}
+      {/* Body — flow natural dari atas, dengan jarak konsisten ke header */}
       <div style={{ 
-        flex: 1,
-        padding: `${symmetricGap}px ${settings.paddingX}px ${symmetricGap}px`,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
+        padding: `${settings.gapAfterHeader}px ${settings.paddingX}px ${settings.gapAfterHeader}px`,
       }}>
         {slide.blocks.map(block => (
           <RenderBlock key={block.id} block={block} settings={settings} />
         ))}
       </div>
 
-      {/* Footer — fixed di bawah dengan padding sama dari konten */}
-      {footer && footer.trim() && (
+      {/* Footer — posisi absolute di bawah dengan jarak yang sama (gapAfterHeader) dari konten */}
+      {hasFooter && (
         <div style={{
-          padding: `0 ${settings.paddingX}px ${settings.paddingTop * 0.6}px`,
-          fontSize: 16, color: '#6B7280', fontStyle: 'italic',
+          position: 'absolute',
+          left: settings.paddingX,
+          right: settings.paddingX,
+          bottom: settings.paddingTop,
+          fontSize: 18, color: '#6B7280', fontStyle: 'italic',
           lineHeight: 1.5, whiteSpace: 'pre-line',
           fontFamily: "'Montserrat', sans-serif",
         }}>
@@ -281,6 +273,8 @@ export default function App() {
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiInputText, setAiInputText] = useState('');
   const [isProcessingAI, setIsProcessingAI] = useState(false);
+  const [aiAllowSplit, setAiAllowSplit] = useState(false); // default: 1 slide saja
+  const [aiError, setAiError] = useState('');
 
   const canvasRefs = useRef({});
 
@@ -449,7 +443,7 @@ Output HANYA JSON valid.`;
       const resp = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiInputText }),
+        body: JSON.stringify({ text: aiInputText, allowSplit: aiAllowSplit }),
       });
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
@@ -491,8 +485,10 @@ Output HANYA JSON valid.`;
       if (parsed.footer) setFooter(parsed.footer);
       setShowAIModal(false);
       setAiInputText('');
+      setAiError('');
     } catch (err) {
-      alert('Gagal proses AI: ' + err.message);
+      console.error('AI Process Error:', err);
+      setAiError(err.message || 'Error tidak diketahui');
     } finally {
       setIsProcessingAI(false);
     }
@@ -590,7 +586,10 @@ Output HANYA JSON valid.`;
 
       {/* ===== TOP BAR ===== */}
       <div style={{
-        background: '#1E293B', padding: isMobile ? '10px 12px' : '14px 20px',
+        background: '#1E293B',
+        padding: isMobile 
+          ? 'calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 12px' 
+          : '14px 20px',
         borderBottom: '1px solid #334155',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
         position: 'sticky', top: 0, zIndex: 50,
@@ -673,7 +672,10 @@ Output HANYA JSON valid.`;
       <div style={{
         display: 'grid',
         gridTemplateColumns: isMobile ? '1fr' : '280px 1fr 320px',
-        height: 'calc(100vh - 60px)',
+        height: isMobile 
+          ? 'calc(100dvh - 60px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))' 
+          : 'calc(100vh - 60px)',
+        paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0,
       }}>
         
         {/* ===== LEFT SIDEBAR ===== */}
@@ -1185,7 +1187,7 @@ Output HANYA JSON valid.`;
             <p style={{ color: '#94A3B8', fontSize: 12.5, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
               Tempel teks mentah apa adanya. AI akan:
               <br />→ Perbaiki typo & tata bahasa
-              <br />→ Pisahkan jadi beberapa slide carousel kalau panjang
+              <br />→ Deteksi <code style={{ background: '#334155', padding: '1px 5px', borderRadius: 3, color: '#FBBF24' }}>*bold*</code>, <code style={{ background: '#334155', padding: '1px 5px', borderRadius: 3, color: '#FBBF24' }}>_italic_</code>, <code style={{ background: '#334155', padding: '1px 5px', borderRadius: 3, color: '#FBBF24' }}>~strike~</code> dari WhatsApp
               <br />→ Pilih struktur (paragraf / bullet / callout) per bagian
               <br />→ Highlight kata kunci penting otomatis
               <br />→ Ekstrak referensi ke catatan kaki
@@ -1194,13 +1196,63 @@ Output HANYA JSON valid.`;
               value={aiInputText}
               onChange={e => setAiInputText(e.target.value)}
               rows={isMobile ? 8 : 11}
-              placeholder="Contoh: tempel naskah edukasi mentah dari dr. Ardi, dengan typo dan struktur acak, biarkan AI yang rapikan..."
+              placeholder="Tempel naskah mentah dari WhatsApp. Format *bold*, _italic_, ~strike~ akan dideteksi otomatis..."
               style={{
                 width: '100%', background: '#0F172A', color: '#E2E8F0',
                 padding: 10, borderRadius: 8, border: '1px solid #334155',
                 fontFamily: 'inherit', fontSize: 13, resize: 'vertical', boxSizing: 'border-box',
               }}
             />
+            
+            {/* Toggle: 1 slide vs allow carousel */}
+            <div style={{
+              marginTop: 12, padding: 12, background: '#0F172A',
+              borderRadius: 8, border: '1px solid #334155',
+            }}>
+              <div style={{ fontSize: 11, color: '#94A3B8', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Output
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => setAiAllowSplit(false)}
+                  style={{
+                    flex: 1, padding: '10px 12px',
+                    background: !aiAllowSplit ? 'linear-gradient(135deg, #3B82F6, #2563EB)' : '#334155',
+                    color: '#fff', border: 'none', borderRadius: 6,
+                    fontWeight: 600, cursor: 'pointer', fontSize: 12,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                  }}
+                >
+                  <span>1 Feed Saja</span>
+                  <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 400 }}>Ringkas, muat 1 slide</span>
+                </button>
+                <button
+                  onClick={() => setAiAllowSplit(true)}
+                  style={{
+                    flex: 1, padding: '10px 12px',
+                    background: aiAllowSplit ? 'linear-gradient(135deg, #8B5CF6, #EC4899)' : '#334155',
+                    color: '#fff', border: 'none', borderRadius: 6,
+                    fontWeight: 600, cursor: 'pointer', fontSize: 12,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                  }}
+                >
+                  <span>Boleh Carousel</span>
+                  <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 400 }}>Pecah jika perlu</span>
+                </button>
+              </div>
+            </div>
+            
+            {aiError && (
+              <div style={{
+                background: '#7F1D1D', color: '#FCA5A5', padding: '10px 12px',
+                borderRadius: 8, marginTop: 10, fontSize: 12.5, lineHeight: 1.5,
+                border: '1px solid #DC2626',
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠ Error:</div>
+                {aiError}
+              </div>
+            )}
+            
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button
                 onClick={() => setShowAIModal(false)}
