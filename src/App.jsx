@@ -550,9 +550,20 @@ const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIn
         <div style={{
           width: 64, height: 64, borderRadius: 9999, overflow: 'hidden',
           background: '#E5E7EB', flexShrink: 0,
-          backgroundImage: profile.avatar ? `url(${profile.avatar})` : 'none',
-          backgroundSize: 'cover', backgroundPosition: 'center',
-        }} />
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {profile.avatar && (
+            <img
+              src={profile.avatar}
+              alt=""
+              crossOrigin="anonymous"
+              style={{
+                width: '100%', height: '100%', objectFit: 'cover',
+                display: 'block',
+              }}
+            />
+          )}
+        </div>
         <div style={{ fontSize: 36, fontWeight: 700, color: '#111827', fontFamily: "'Montserrat', sans-serif" }}>
           {profile.name}
         </div>
@@ -651,6 +662,104 @@ export default function App() {
   // { onShrink: () => void, onSplit: () => void }
 
   const canvasRefs = useRef({});
+  
+  // ===== UNDO/REDO HISTORY =====
+  // Simpan snapshot dari state (slides, footer, profile, settings) di history stack
+  // Saat user lakukan action → push ke past, clear future
+  // Saat undo → pop past, push ke future
+  // Saat redo → pop future, push ke past
+  const historyRef = useRef({
+    past: [],     // array of snapshots, oldest first
+    future: [],   // array of snapshots, newest first
+    isApplying: false, // true saat sedang apply undo/redo (jangan re-record)
+  });
+  const HISTORY_LIMIT = 50;
+  const [historyTick, setHistoryTick] = useState(0); // untuk re-render button enabled state
+  
+  // Capture snapshot dari state yang relevan
+  const captureSnapshot = () => ({
+    slides: JSON.parse(JSON.stringify(slides)),
+    footer,
+    profile: JSON.parse(JSON.stringify(profile)),
+    settings: { ...settings },
+    activeSlide,
+  });
+  
+  // Apply snapshot ke state
+  const applySnapshot = (snap) => {
+    historyRef.current.isApplying = true;
+    setSlides(snap.slides);
+    setFooter(snap.footer);
+    setProfile(snap.profile);
+    setSettings(snap.settings);
+    setActiveSlide(Math.min(snap.activeSlide, snap.slides.length - 1));
+    // Reset flag setelah React render selesai
+    setTimeout(() => { historyRef.current.isApplying = false; }, 0);
+  };
+  
+  // Record current state ke history. Dipanggil secara debounced via useEffect.
+  const lastSnapshotRef = useRef(null);
+  useEffect(() => {
+    if (historyRef.current.isApplying) return;
+    
+    const timer = setTimeout(() => {
+      const snap = captureSnapshot();
+      const snapJson = JSON.stringify(snap);
+      
+      // Skip kalau sama dengan snapshot terakhir (gak ada perubahan riil)
+      if (lastSnapshotRef.current === snapJson) return;
+      lastSnapshotRef.current = snapJson;
+      
+      const h = historyRef.current;
+      h.past.push(snap);
+      if (h.past.length > HISTORY_LIMIT) h.past.shift();
+      h.future = []; // action baru → clear future
+      setHistoryTick(t => t + 1);
+    }, 350); // debounce 350ms agar slider drag dll tidak spam history
+    
+    return () => clearTimeout(timer);
+  }, [slides, footer, profile, settings]);
+  
+  const undo = () => {
+    const h = historyRef.current;
+    // Past terakhir = current state, jadi pop yang current dulu lalu apply yang sebelumnya
+    if (h.past.length < 2) return;
+    const current = h.past.pop();
+    h.future.unshift(current);
+    const target = h.past[h.past.length - 1];
+    lastSnapshotRef.current = JSON.stringify(target);
+    applySnapshot(target);
+    setHistoryTick(t => t + 1);
+  };
+  
+  const redo = () => {
+    const h = historyRef.current;
+    if (h.future.length === 0) return;
+    const target = h.future.shift();
+    h.past.push(target);
+    lastSnapshotRef.current = JSON.stringify(target);
+    applySnapshot(target);
+    setHistoryTick(t => t + 1);
+  };
+  
+  const canUndo = historyRef.current.past.length >= 2;
+  const canRedo = historyRef.current.future.length > 0;
+  
+  // Keyboard shortcut: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
+  useEffect(() => {
+    const handler = (e) => {
+      // Ignore kalau lagi ngetik di input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.contentEditable === 'true') return;
+      
+      const isUndo = (e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey;
+      const isRedo = (e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey));
+      
+      if (isUndo) { e.preventDefault(); undo(); }
+      else if (isRedo) { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Detect mobile
   useEffect(() => {
@@ -846,7 +955,41 @@ export default function App() {
   };
 
   // ===== Format =====
-  const applyHighlight = (color) => document.execCommand('hiliteColor', false, color);
+  // Stabilo manual: wrap selection dalam <mark> dengan rounded styling
+  const applyHighlight = (color) => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) return;
+    
+    if (color === 'transparent' || !color) {
+      // Hapus highlight: jika selection ada di dalam mark, unwrap
+      const selectedText = range.toString();
+      if (!selectedText) return;
+      // Cari mark ancestor
+      let node = range.commonAncestorContainer;
+      while (node && node.nodeType === 3) node = node.parentNode;
+      while (node && node.nodeName !== 'MARK' && node.nodeName !== 'DIV') node = node.parentNode;
+      if (node && node.nodeName === 'MARK') {
+        // Replace mark dengan text content
+        const parent = node.parentNode;
+        while (node.firstChild) parent.insertBefore(node.firstChild, node);
+        parent.removeChild(node);
+      }
+      return;
+    }
+    
+    const selectedHTML = range.cloneContents();
+    const div = document.createElement('div');
+    div.appendChild(selectedHTML);
+    const innerHTML = div.innerHTML;
+    
+    // Bersihkan mark nested kalau ada (supaya gak double-wrap)
+    const cleanHTML = innerHTML.replace(/<\/?mark[^>]*>/g, '');
+    
+    const markHTML = `<mark style="background:${color}; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${cleanHTML}</mark>`;
+    document.execCommand('insertHTML', false, markHTML);
+  };
   const applyBold = () => document.execCommand('bold');
   const applyItalic = () => document.execCommand('italic');
   const clearFormatting = () => document.execCommand('removeFormat');
@@ -1133,22 +1276,39 @@ Output HANYA JSON valid.`;
         return;
       }
 
-      // Force render: scale 1 sementara untuk ekspor akurat
-      const dataUrl = await toPng(node, {
+      // Tunggu semua image dalam node fully loaded
+      const imgs = node.querySelectorAll('img');
+      await Promise.all(Array.from(imgs).map(img => {
+        if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
+        return new Promise(res => {
+          img.onload = res;
+          img.onerror = res; // tetap lanjut meski ada yang gagal
+          // Force re-load kalau perlu
+          if (img.complete) res();
+        });
+      }));
+      
+      // Beri waktu ekstra untuk font dan rendering
+      await new Promise(r => setTimeout(r, 200));
+
+      const opts = {
         width: CANVAS_W,
         height: CANVAS_H,
         cacheBust: true,
         pixelRatio: 1,
         backgroundColor: '#FFFFFF',
         skipFonts: false,
-        fontEmbedCSS: undefined, // biarkan auto-embed
         style: {
-          // pastikan canvas dirender pada ukuran asli, abaikan scale dari preview
           transform: 'none',
           transformOrigin: 'top left',
           margin: '0',
         },
-      });
+      };
+
+      // Jalankan toPng 2x — kadang yang pertama gagal load image/font, yang kedua lancar
+      // (technique umum di komunitas html-to-image untuk hasil reliable)
+      await toPng(node, opts);
+      const dataUrl = await toPng(node, opts);
 
       const a = document.createElement('a');
       a.href = dataUrl;
@@ -1254,6 +1414,37 @@ Output HANYA JSON valid.`;
         </div>
 
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {/* Undo / Redo */}
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            style={{
+              background: '#334155', color: '#fff', border: 'none',
+              padding: '7px 9px', borderRadius: 6,
+              cursor: canUndo ? 'pointer' : 'not-allowed',
+              opacity: canUndo ? 1 : 0.35,
+              display: 'flex', alignItems: 'center',
+            }}
+            title="Undo (Ctrl+Z)"
+          >
+            <RotateCcw size={14} />
+          </button>
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            style={{
+              background: '#334155', color: '#fff', border: 'none',
+              padding: '7px 9px', borderRadius: 6,
+              cursor: canRedo ? 'pointer' : 'not-allowed',
+              opacity: canRedo ? 1 : 0.35,
+              display: 'flex', alignItems: 'center',
+              transform: 'scaleX(-1)',
+            }}
+            title="Redo (Ctrl+Shift+Z atau Ctrl+Y)"
+          >
+            <RotateCcw size={14} />
+          </button>
+          
 {mode === 'ai' && (
             <button
               onClick={() => setShowAIModal(true)}
@@ -1344,7 +1535,7 @@ Output HANYA JSON valid.`;
             <SliderField
               label="Margin Atas Canvas"
               value={settings.edgeTop}
-              min={40} max={160} step={4}
+              min={40} max={400} step={4}
               onChange={v => setSettings({ ...settings, edgeTop: v })}
               unit="px"
               hint="jarak username ke pinggir atas"
@@ -1352,7 +1543,7 @@ Output HANYA JSON valid.`;
             <SliderField
               label="Margin Bawah Canvas"
               value={settings.edgeBottom}
-              min={40} max={160} step={4}
+              min={40} max={400} step={4}
               onChange={v => setSettings({ ...settings, edgeBottom: v })}
               unit="px"
               hint="jarak footer ke pinggir bawah"
