@@ -135,7 +135,7 @@ const defaultBlocks = () => [
   {
     id: uid(),
     type: 'paragraph',
-    text: 'Secara ilmiah, terapi gurah lendir <mark style="background:#FECDD3; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">TIDAK direkomendasikan</mark> sebagai terapi standar medis.',
+    text: 'Secara ilmiah, terapi gurah lendir <mark style="background:#FECDD3; padding:1px 5px; border-radius:4px; box-decoration-break:clone; -webkit-box-decoration-break:clone">TIDAK direkomendasikan</mark> sebagai terapi standar medis.',
     font: 'Montserrat',
     color: '#111827',
     size: 40,
@@ -987,7 +987,7 @@ export default function App() {
     // Bersihkan mark nested kalau ada (supaya gak double-wrap)
     const cleanHTML = innerHTML.replace(/<\/?mark[^>]*>/g, '');
     
-    const markHTML = `<mark style="background:${color}; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${cleanHTML}</mark>`;
+    const markHTML = `<mark style="background:${color}; padding:1px 5px; border-radius:4px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${cleanHTML}</mark>`;
     document.execCommand('insertHTML', false, markHTML);
   };
   const applyBold = () => document.execCommand('bold');
@@ -1169,7 +1169,7 @@ Output HANYA JSON valid.`;
               if (b.highlights && Array.isArray(b.highlights)) {
                 b.highlights.forEach(h => {
                   const re = new RegExp(h.phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
-                  text = text.replace(re, `<mark style="background:${h.color}; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${h.phrase}</mark>`);
+                  text = text.replace(re, `<mark style="background:${h.color}; padding:1px 5px; border-radius:4px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${h.phrase}</mark>`);
                 });
               }
               return { id: uid(), type: 'paragraph', text, font: 'Montserrat', color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400, align: 'left' };
@@ -1239,7 +1239,7 @@ Output HANYA JSON valid.`;
         if (newBlock.highlights && Array.isArray(newBlock.highlights)) {
           newBlock.highlights.forEach(h => {
             const re = new RegExp(h.phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
-            text = text.replace(re, `<mark style="background:${h.color}; padding:4px 12px; border-radius:999px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${h.phrase}</mark>`);
+            text = text.replace(re, `<mark style="background:${h.color}; padding:1px 5px; border-radius:4px; box-decoration-break:clone; -webkit-box-decoration-break:clone">${h.phrase}</mark>`);
           });
         }
         appBlock = { ...base, type: 'paragraph', text, color: '#111827', size: DEFAULT_CONTENT_SIZE, weight: 400, align: 'left' };
@@ -1348,7 +1348,7 @@ Output HANYA JSON valid.`;
         .scroll-thin::-webkit-scrollbar-track { background: #1E293B; }
         .scroll-thin::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         [contenteditable]:focus { outline: 2px solid #3B82F6; outline-offset: 2px; }
-        mark { padding: 4px 12px; border-radius: 999px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+        mark { padding: 1px 5px; border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
         button { font-family: 'Montserrat', sans-serif; }
         input, select, textarea { font-family: 'Montserrat', sans-serif; }
       `}</style>
@@ -1357,13 +1357,14 @@ Output HANYA JSON valid.`;
       <div style={{
         background: '#1E293B',
         padding: isMobile 
-          ? 'calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px 12px' 
+          ? 'max(10px, env(safe-area-inset-top, 0px)) 10px 10px 10px' 
           : '14px 20px',
         borderBottom: '1px solid #334155',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: isMobile ? 6 : 8,
         position: 'sticky', top: 0, zIndex: 50,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 10, flexShrink: 0 }}>
           {isMobile && (
             <button
               onClick={() => setMobilePanel(mobilePanel === 'left' ? 'canvas' : 'left')}
@@ -1373,11 +1374,11 @@ Output HANYA JSON valid.`;
             </button>
           )}
           <div style={{
-            width: 36, height: 36, borderRadius: 9,
+            width: isMobile ? 32 : 36, height: isMobile ? 32 : 36, borderRadius: 9,
             background: 'linear-gradient(135deg, #F59E0B, #EF4444)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}>
-            <Layers size={18} color="#fff" />
+            <Layers size={isMobile ? 16 : 18} color="#fff" />
           </div>
           {!isMobile && (
             <div>
@@ -1387,54 +1388,63 @@ Output HANYA JSON valid.`;
           )}
         </div>
 
-        {/* Mode switcher */}
-        <div style={{ display: 'flex', background: '#0F172A', padding: 3, borderRadius: 8, gap: 2 }}>
+        {/* Mode switcher - icon only di mobile */}
+        <div style={{ 
+          display: 'flex', background: '#0F172A', 
+          padding: isMobile ? 2 : 3, borderRadius: 8, gap: 2, flexShrink: 0,
+        }}>
           <button
             onClick={() => setMode('ai')}
             style={{
               background: mode === 'ai' ? 'linear-gradient(135deg, #8B5CF6, #EC4899)' : 'transparent',
-              color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6,
+              color: '#fff', border: 'none', 
+              padding: isMobile ? '6px 8px' : '6px 12px', borderRadius: 6,
               cursor: 'pointer', fontSize: 12, fontWeight: 600,
               display: 'flex', alignItems: 'center', gap: 4,
             }}
+            title="AI Auto"
           >
-            <Wand2 size={13} /> AI Auto
+            <Wand2 size={13} /> {!isMobile && 'AI Auto'}
           </button>
           <button
             onClick={() => setMode('manual')}
             style={{
               background: mode === 'manual' ? '#3B82F6' : 'transparent',
-              color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6,
+              color: '#fff', border: 'none', 
+              padding: isMobile ? '6px 8px' : '6px 12px', borderRadius: 6,
               cursor: 'pointer', fontSize: 12, fontWeight: 600,
               display: 'flex', alignItems: 'center', gap: 4,
             }}
+            title="Manual"
           >
-            <Edit3 size={13} /> Manual
+            <Edit3 size={13} /> {!isMobile && 'Manual'}
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div style={{ 
+          display: 'flex', gap: isMobile ? 4 : 6, alignItems: 'center', flexShrink: 0,
+        }}>
           {/* Undo / Redo */}
           <button
             onClick={undo}
             disabled={!canUndo}
             style={{
               background: '#334155', color: '#fff', border: 'none',
-              padding: '7px 9px', borderRadius: 6,
+              padding: isMobile ? '6px 7px' : '7px 9px', borderRadius: 6,
               cursor: canUndo ? 'pointer' : 'not-allowed',
               opacity: canUndo ? 1 : 0.35,
               display: 'flex', alignItems: 'center',
             }}
             title="Undo (Ctrl+Z)"
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={isMobile ? 13 : 14} />
           </button>
           <button
             onClick={redo}
             disabled={!canRedo}
             style={{
               background: '#334155', color: '#fff', border: 'none',
-              padding: '7px 9px', borderRadius: 6,
+              padding: isMobile ? '6px 7px' : '7px 9px', borderRadius: 6,
               cursor: canRedo ? 'pointer' : 'not-allowed',
               opacity: canRedo ? 1 : 0.35,
               display: 'flex', alignItems: 'center',
@@ -1442,7 +1452,7 @@ Output HANYA JSON valid.`;
             }}
             title="Redo (Ctrl+Shift+Z atau Ctrl+Y)"
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={isMobile ? 13 : 14} />
           </button>
           
 {mode === 'ai' && (
@@ -2518,14 +2528,15 @@ const fmtBtn = {
 };
 
 const topBtnStyle = (bg) => ({
-  background: bg, color: '#fff', border: 'none', padding: '8px 12px', borderRadius: 8,
+  background: bg, color: '#fff', border: 'none',
+  padding: '8px 10px', borderRadius: 8,
   fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
   fontSize: 12,
 });
 
 const mobileTabBtn = (active) => ({
   background: active ? '#3B82F6' : '#334155', color: '#fff', border: 'none',
-  width: 34, height: 34, borderRadius: 7, cursor: 'pointer',
+  width: 32, height: 32, borderRadius: 7, cursor: 'pointer',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
 });
 
