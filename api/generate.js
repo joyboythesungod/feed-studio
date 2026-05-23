@@ -3,6 +3,8 @@
 function parseWhatsAppFormatting(text) {
   if (!text) return text;
   let result = text;
+  // [REF: ...] → keterangan kecil italic gray
+  result = result.replace(/\[REF:\s*([^\]]+)\]/g, '<span class="ref-note" style="display:block;font-size:0.6em;color:#6B7280;font-style:italic;margin-top:4px;font-family:\'Montserrat\',sans-serif;direction:ltr;">$1</span>');
   result = result.replace(/`([^`\n]+)`/g, '<code style="background:#F3F4F6;padding:2px 6px;border-radius:4px;font-size:0.9em">$1</code>');
   result = result.replace(/(^|\s|>|\(|"|\[)\*([^\*\n]+?)\*(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<b>$2</b>');
   result = result.replace(/(^|\s|>|\(|"|\[)_([^_\n]+?)_(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<i>$2</i>');
@@ -22,7 +24,7 @@ export default async function handler(req, res) {
   if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
 
   try {
-    const { text, allowSplit = false } = req.body;
+    const { text, allowSplit = false, improveText = true } = req.body;
     if (!text || !text.trim()) return res.status(400).json({ error: 'Text is required' });
 
     const splitInstruction = allowSplit
@@ -40,12 +42,38 @@ UNTUK REFERENSI:
 - Jika input mentah punya bagian referensi/sumber eksplisit, masukkan ke "footer".
 - Jika tidak ada, set "footer" = null.`;
 
+    const textHandling = improveText
+      ? `MODE: PERBAIKI TEKS.
+- Perbaiki SEMUA typo, ejaan EYD, dan tata bahasa Bahasa Indonesia.
+- Ringkas kata yang tidak perlu, buat lebih padat dan jelas.
+- Tambahkan *bold* dan _italic_ pada kata kunci yang seharusnya ditekankan.
+- BOLEH ubah struktur kalimat agar lebih efektif.`
+      : `MODE: PERTAHANKAN APA ADANYA.
+- JANGAN ubah kata-kata dari input. PERTAHANKAN persis teks asli.
+- JANGAN perbaiki typo (kecuali typo sangat parah yang bikin tidak terbaca).
+- JANGAN tambahkan formatting *bold*/_italic_ baru — hanya pertahankan yang sudah ada di input.
+- HANYA susun ke dalam blocks (heading/paragraph/bullets/callout) tanpa mengubah isinya.
+- Tujuan: penataan visual, BUKAN penyuntingan konten.`;
+
     const prompt = `Kamu adalah AI desainer konten edukasi untuk Instagram akun @ardisantoso (dr. Ardi Santoso, spesialis anak).
 
 INPUT MENTAH (mungkin dari WhatsApp dengan markdown *bold*, _italic_, ~strike~, atau typo, struktur acak):
 """
 ${text}
 """
+
+${textHandling}
+
+DETEKSI BAHASA ARAB (AYAT QURAN / HADIS):
+- Jika input mengandung teks Arab dengan/tanpa harokat (tanwin, fathah, kasrah, dhammah, sukun, dll), PERTAHANKAN teks Arab PERSIS sesuai input — JANGAN ubah huruf, harokat, atau urutan kata.
+- Jika teks Arab adalah ayat Quran, TAMBAHKAN keterangan kecil di baris terpisah dengan format: "(QS. [Nama Surah]: [nomor ayat])" misalnya "(QS. Al-Baqarah: 255)". Tulis ini sebagai paragraph terpisah ATAU dalam block yang sama dengan format newline.
+- Jika teks Arab adalah hadis, tambahkan keterangan: "(HR. [perawi])" misalnya "(HR. Bukhari)" atau "(HR. Muslim)".
+- Identifikasi ayat berdasarkan kosakata khas Quran. Identifikasi hadis dari konteks (biasanya ada perawi disebut, atau frasa khas hadis).
+- Kalau ragu apakah ayat/hadis, JANGAN buat keterangan — biarkan user yang isi manual.
+- Untuk slide yang mengandung ayat/hadis, layout terbaik:
+  * Paragraph 1: teks Arab (langsung, tanpa quote bahasa Indonesia)
+  * Paragraph 2: keterangan dalam font kecil — TANDAI dengan format khusus: "[REF: QS. Al-Baqarah: 255]" — sistem akan render keterangan ini lebih kecil
+  * Bisa diikuti penjelasan dalam bahasa Indonesia di paragraph terpisah
 
 PRINSIP DESAIN INTI — BACA BAIK-BAIK:
 
@@ -117,8 +145,6 @@ HIGHLIGHT (STABILO) — terpisah dari bold/italic:
 SPLIT INSTRUCTION: ${splitInstruction}
 
 LAINNYA:
-- Perbaiki typo dan ejaan EYD
-- Konten ringkas, padat, buang kata tidak perlu
 - Jangan tambahkan info yang tidak ada di input
 
 FORMAT OUTPUT (JSON murni, tanpa markdown fence, tanpa penjelasan):

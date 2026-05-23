@@ -1,8 +1,10 @@
-// Vercel Serverless Function — convert one block to another type via AI
+// Vercel Serverless Function — transform block ke jenis lain via AI
+// Endpoint: /api/transform-block
 
 function parseWhatsAppFormatting(text) {
   if (!text) return text;
   let result = text;
+  result = result.replace(/\[REF:\s*([^\]]+)\]/g, '<span class="ref-note" style="display:block;font-size:0.6em;color:#6B7280;font-style:italic;margin-top:4px;font-family:\'Montserrat\',sans-serif;direction:ltr;">$1</span>');
   result = result.replace(/`([^`\n]+)`/g, '<code style="background:#F3F4F6;padding:2px 6px;border-radius:4px;font-size:0.9em">$1</code>');
   result = result.replace(/(^|\s|>|\(|"|\[)\*([^\*\n]+?)\*(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<b>$2</b>');
   result = result.replace(/(^|\s|>|\(|"|\[)_([^_\n]+?)_(?=\s|$|<|\)|"|\]|[.,!?;:])/g, '$1<i>$2</i>');
@@ -10,15 +12,14 @@ function parseWhatsAppFormatting(text) {
   return result;
 }
 
-// Strip HTML tags to get raw text for AI input
+// Strip HTML tags for clean input to AI
 function stripHtml(html) {
   if (!html) return '';
-  return String(html)
-    .replace(/<mark[^>]*>(.*?)<\/mark>/g, '$1')
-    .replace(/<b>(.*?)<\/b>/g, '*$1*')
-    .replace(/<i>(.*?)<\/i>/g, '_$1_')
-    .replace(/<s>(.*?)<\/s>/g, '~$1~')
-    .replace(/<code[^>]*>(.*?)<\/code>/g, '`$1`')
+  return html
+    .replace(/<mark[^>]*>(.*?)<\/mark>/gi, '$1')
+    .replace(/<b>(.*?)<\/b>/gi, '*$1*')
+    .replace(/<i>(.*?)<\/i>/gi, '_$1_')
+    .replace(/<s>(.*?)<\/s>/gi, '~$1~')
     .replace(/<[^>]+>/g, '')
     .trim();
 }
@@ -36,55 +37,59 @@ export default async function handler(req, res) {
 
   try {
     const { block, targetType } = req.body;
-    if (!block || !targetType) {
-      return res.status(400).json({ error: 'block and targetType required' });
-    }
+    if (!block || !targetType) return res.status(400).json({ error: 'block dan targetType wajib diisi' });
 
-    // Extract source content
-    let sourceText = '';
+    // Ekstrak teks asli dari block
+    let originalContent = '';
     if (block.type === 'bullets' && Array.isArray(block.items)) {
-      sourceText = block.items.map(it => '- ' + stripHtml(it)).join('\n');
-    } else if (block.text) {
-      sourceText = stripHtml(block.text);
+      originalContent = block.items.map(it => '- ' + stripHtml(it)).join('\n');
+    } else {
+      originalContent = stripHtml(block.text || '');
     }
 
-    if (!sourceText.trim()) {
-      return res.status(400).json({ error: 'Block has no content to convert' });
-    }
+    if (!originalContent.trim()) return res.status(400).json({ error: 'Block tidak punya konten' });
 
     const typeDescriptions = {
-      heading: 'JUDUL utama slide — singkat, kuat, max 12 kata, format: { "type": "heading", "text": "..." }',
-      paragraph: 'PARAGRAF naratif — 1-3 kalimat, format: { "type": "paragraph", "text": "...", "highlights": [{ "phrase": "frasa", "color": "#FECDD3" }] }',
-      bullets: 'BULLETS — daftar 3+ item, format: { "type": "bullets", "icon": "check|x|arrow-right|star|warning|heart", "items": ["...", "..."] }',
-      callout: 'CALLOUT (kotak penekanan) — 1-2 kalimat insight kuat, format: { "type": "callout", "text": "...", "bgColor": "#DBEAFE" }',
+      heading: 'JUDUL: singkat, kuat, statement utama (max 12 kata, biasanya 4-8 kata). Output: { "type": "heading", "text": "..." }',
+      paragraph: 'PARAGRAPH: penjelasan naratif 1-3 kalimat. Output: { "type": "paragraph", "text": "...", "highlights": [{ "phrase": "...", "color": "#FECDD3" }] }',
+      bullets: 'BULLETS: pecah jadi daftar 3-5 poin singkat dan sejenis. Output: { "type": "bullets", "icon": "check|x|arrow-right|star|warning|heart", "items": ["...", "..."] }',
+      callout: 'CALLOUT: kotak penekanan untuk insight/kutipan kunci. 1-2 kalimat. Output: { "type": "callout", "text": "...", "bgColor": "#DBEAFE" }',
     };
 
-    const prompt = `Kamu adalah AI desainer konten Instagram untuk akun edukasi kesehatan.
+    const prompt = `Kamu adalah AI yang transform sebuah block konten ke jenis lain untuk Instagram feed (akun edukasi @ardisantoso).
 
-KONTEN ASAL (saat ini berupa "${block.type}"):
+KONTEN BLOCK SAAT INI (jenis: ${block.type}):
 """
-${sourceText}
+${originalContent}
 """
 
-TUGAS: Ubah konten di atas menjadi jenis block "${targetType}".
+TUGAS: Ubah menjadi jenis "${targetType}" dengan adaptasi yang TEPAT.
 
-SPESIFIKASI ${targetType.toUpperCase()}:
-${typeDescriptions[targetType] || typeDescriptions.paragraph}
+ATURAN JENIS TARGET:
+${typeDescriptions[targetType]}
 
-ATURAN:
-- Pertahankan makna asli sepenuhnya, jangan tambah info baru
-- Sesuaikan struktur supaya pas dengan jenis block target
-- Jika target "heading" tapi konten panjang, ekstrak inti utamanya jadi judul singkat
-- Jika target "bullets" tapi konten naratif, pecah jadi 3-5 poin
-- Jika target "paragraph" tapi konten bullets, gabung jadi 1-2 kalimat mengalir
-- Jika target "callout" tapi konten panjang, ringkas jadi insight kunci 1-2 kalimat
-- Pertahankan markdown WhatsApp (*bold*, _italic_) yang sudah ada di konten asal
-- Untuk paragraph/callout, boleh tambahkan 1-2 highlights pada kata kunci penting
+ATURAN ADAPTASI:
+- Pertahankan MAKNA INTI, jangan tambah informasi baru yang tidak ada di input.
+- Sesuaikan struktur dengan jenis target.
+- Untuk transform PARAGRAPH → BULLETS: pecah kalimat jadi poin-poin sejenis. Pilih icon yang sesuai konteks (check=positif, x=negatif/larangan, warning=peringatan, arrow-right=netral, star=highlight).
+- Untuk transform BULLETS → PARAGRAPH: gabungkan poin-poin jadi naratif yang mengalir.
+- Untuk transform PARAGRAPH/BULLETS → CALLOUT: ambil intisari paling kuat, ringkas jadi 1-2 kalimat penekanan.
+- Untuk transform apa pun → HEADING: ekstrak statement utama, ringkas jadi judul kuat.
+- PERTAHANKAN markdown WhatsApp (*bold*, _italic_) yang sudah ada.
+- Tambahkan *bold* / _italic_ kalau cocok dengan jenis target (max 2-3 per block).
 
-WARNA HIGHLIGHT (jika ada):
-- #FECDD3 (pink) peringatan, #FEF3C7 (kuning) penekanan, #D1FAE5 (hijau) positif, #DBEAFE (biru) fakta, #E9D5FF (ungu) solusi, #FED7AA (peach) fokus
+WARNA HIGHLIGHT/CALLOUT BG (pilih sesuai konteks):
+- #FECDD3 (pink) → peringatan, larangan
+- #FEF3C7 (kuning) → penekanan
+- #D1FAE5 (hijau) → positif, rekomendasi
+- #DBEAFE (biru) → fakta, info netral (DEFAULT untuk callout)
+- #E9D5FF (ungu) → solusi, alternatif
+- #FED7AA (peach) → fokus
 
-Output HANYA JSON valid dari satu block target, tanpa markdown fence:`;
+FORMAT OUTPUT (JSON murni saja, tanpa markdown fence, tanpa penjelasan):
+${typeDescriptions[targetType].split('Output: ')[1]}
+
+Output HANYA JSON valid.`;
 
     const model = 'gemini-flash-latest';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -96,7 +101,7 @@ Output HANYA JSON valid dari satu block target, tanpa markdown fence:`;
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.5,
-          maxOutputTokens: 1500,
+          maxOutputTokens: 2000,
           responseMimeType: 'application/json',
         }
       }),
@@ -116,7 +121,7 @@ Output HANYA JSON valid dari satu block target, tanpa markdown fence:`;
     try {
       const parsed = JSON.parse(clean);
       
-      // Apply WhatsApp markdown
+      // Apply WhatsApp markdown formatting
       if (parsed.text) parsed.text = parseWhatsAppFormatting(parsed.text);
       if (parsed.items && Array.isArray(parsed.items)) {
         parsed.items = parsed.items.map(it => parseWhatsAppFormatting(it));
@@ -124,7 +129,7 @@ Output HANYA JSON valid dari satu block target, tanpa markdown fence:`;
       
       return res.status(200).json(parsed);
     } catch (parseErr) {
-      return res.status(500).json({ error: 'Failed to parse AI response', raw: clean });
+      return res.status(500).json({ error: 'Format respons tidak valid', raw: clean });
     }
   } catch (err) {
     return res.status(500).json({ error: err.message });
