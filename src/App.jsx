@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { toPng } from 'html-to-image';
 import { 
   Check, X, ArrowRight, Circle, Star, Heart, AlertTriangle, 
   Download, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
@@ -22,17 +23,25 @@ const FONT_OPTIONS = [
 ];
 
 const HIGHLIGHT_PRESETS = [
-  { name: 'Pink', color: '#FECDD3' },
-  { name: 'Pink Tua', color: '#FBA5C2' },
-  { name: 'Kuning', color: '#FEF3C7' },
-  { name: 'Kuning Tua', color: '#FDE68A' },
-  { name: 'Hijau', color: '#D1FAE5' },
-  { name: 'Hijau Tua', color: '#A7F3D0' },
-  { name: 'Biru', color: '#DBEAFE' },
-  { name: 'Biru Tua', color: '#BFDBFE' },
-  { name: 'Ungu', color: '#E9D5FF' },
-  { name: 'Ungu Tua', color: '#D8B4FE' },
+  // Warm
+  { name: 'Pink Muda', color: '#FECDD3' },
+  { name: 'Pink', color: '#FBA5C2' },
+  { name: 'Coral', color: '#FCA5A5' },
   { name: 'Peach', color: '#FED7AA' },
+  { name: 'Kuning Muda', color: '#FEF3C7' },
+  { name: 'Kuning', color: '#FDE68A' },
+  // Nature
+  { name: 'Lime', color: '#D9F99D' },
+  { name: 'Hijau Muda', color: '#D1FAE5' },
+  { name: 'Hijau', color: '#A7F3D0' },
+  { name: 'Mint', color: '#A7F3D0' },
+  // Cool
+  { name: 'Cyan', color: '#CFFAFE' },
+  { name: 'Biru Muda', color: '#DBEAFE' },
+  { name: 'Biru', color: '#BFDBFE' },
+  { name: 'Ungu Muda', color: '#E9D5FF' },
+  { name: 'Ungu', color: '#D8B4FE' },
+  // Neutral
   { name: 'Abu', color: '#E5E7EB' },
 ];
 
@@ -46,9 +55,55 @@ const BULLET_ICONS = {
   'warning': { label: '!', Icon: AlertTriangle, color: '#F59E0B' },
 };
 
-const fontLink = `@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Poppins:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@400;500;600;700;800&family=Lora:wght@400;500;600;700&family=Nunito:wght@300;400;500;600;700;800&display=swap');`;
+const fontLink = `@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Poppins:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@400;500;600;700;800&family=Lora:wght@400;500;600;700&family=Nunito:wght@300;400;500;600;700;800&family=Scheherazade+New:wght@400;500;600;700&display=swap');`;
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+// ============ ARABIC TEXT DETECTION ============
+// Range Unicode Arabic + harokat:
+// U+0600–U+06FF (Arabic), U+0750–U+077F, U+08A0–U+08FF, U+FB50–U+FDFF, U+FE70–U+FEFF
+const ARABIC_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+const ARABIC_RUN_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF][\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\s\.\،\؛\؟\!\:\-\d]*/g;
+
+function hasArabic(text) {
+  if (!text) return false;
+  // Strip HTML untuk cek mentah
+  const stripped = String(text).replace(/<[^>]+>/g, '');
+  return ARABIC_REGEX.test(stripped);
+}
+
+// Wrap setiap run Arab dengan <span> Scheherazade + RTL
+// Bekerja pada HTML — hati-hati supaya gak rusak existing tags
+function wrapArabicSpans(html, sizeMultiplier = 1.5) {
+  if (!html) return html;
+  if (!ARABIC_REGEX.test(html)) return html;
+  
+  // Strategy: pisahkan HTML menjadi text nodes dan tag nodes, lalu transform text nodes saja
+  const parts = [];
+  let i = 0;
+  while (i < html.length) {
+    if (html[i] === '<') {
+      // Skip tag
+      const end = html.indexOf('>', i);
+      if (end === -1) { parts.push(html.slice(i)); break; }
+      parts.push(html.slice(i, end + 1));
+      i = end + 1;
+    } else {
+      // Text run
+      const next = html.indexOf('<', i);
+      const textEnd = next === -1 ? html.length : next;
+      const textChunk = html.slice(i, textEnd);
+      // Wrap Arabic runs di dalam text chunk
+      const wrapped = textChunk.replace(ARABIC_RUN_REGEX, (match) => {
+        if (!ARABIC_REGEX.test(match)) return match;
+        return `<span style="font-family: 'Scheherazade New', serif; direction: rtl; unicode-bidi: embed; font-size: ${sizeMultiplier}em; line-height: 1.8; display: inline-block; vertical-align: middle;">${match}</span>`;
+      });
+      parts.push(wrapped);
+      i = textEnd;
+    }
+  }
+  return parts.join('');
+}
 
 // Default global settings
 const DEFAULT_SETTINGS = {
@@ -333,10 +388,10 @@ function RenderBlock({ block, settings }) {
   };
 
   if (block.type === 'heading') {
-    return <div style={{ ...commonStyle, marginBottom: settings.blockGap }} dangerouslySetInnerHTML={{ __html: block.text }} />;
+    return <div style={{ ...commonStyle, marginBottom: settings.blockGap }} dangerouslySetInnerHTML={{ __html: wrapArabicSpans(block.text, 1.4) }} />;
   }
   if (block.type === 'paragraph') {
-    return <div style={{ ...commonStyle, marginBottom: settings.blockGap }} dangerouslySetInnerHTML={{ __html: block.text }} />;
+    return <div style={{ ...commonStyle, marginBottom: settings.blockGap }} dangerouslySetInnerHTML={{ __html: wrapArabicSpans(block.text, 1.6) }} />;
   }
   if (block.type === 'bullets') {
     const iconConf = BULLET_ICONS[block.icon] || BULLET_ICONS['arrow-right'];
@@ -353,7 +408,7 @@ function RenderBlock({ block, settings }) {
             }}>
               <Icon size={22} color="#fff" strokeWidth={3} />
             </div>
-            <div style={commonStyle} dangerouslySetInnerHTML={{ __html: item }} />
+            <div style={commonStyle} dangerouslySetInnerHTML={{ __html: wrapArabicSpans(item, 1.5) }} />
           </div>
         ))}
       </div>
@@ -368,7 +423,7 @@ function RenderBlock({ block, settings }) {
         borderRadius: 12,
         marginBottom: settings.blockGap,
       }}>
-        <div style={commonStyle} dangerouslySetInnerHTML={{ __html: block.text }} />
+        <div style={commonStyle} dangerouslySetInnerHTML={{ __html: wrapArabicSpans(block.text, 1.5) }} />
       </div>
     );
   }
@@ -480,7 +535,7 @@ const SlideCanvas = React.forwardRef(({ slide, profile, footer, settings, pageIn
       style={{
         width: CANVAS_W,
         height: CANVAS_H,
-        background: slide.bg || '#FFFFFF',
+        background: '#FFFFFF',
         position: 'relative',
         overflow: 'hidden',
         fontFamily: "'Montserrat', sans-serif",
@@ -585,6 +640,7 @@ export default function App() {
   const [aiInputText, setAiInputText] = useState('');
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiAllowSplit, setAiAllowSplit] = useState(false); // default: 1 slide saja
+  const [aiImproveText, setAiImproveText] = useState(true); // default: perbaiki teks
   const [aiError, setAiError] = useState('');
   const [overflowPopup, setOverflowPopup] = useState(null);
   const [convertingBlock, setConvertingBlock] = useState(null); // blockId yang lagi dalam proses convert
@@ -921,7 +977,7 @@ Output HANYA JSON valid.`;
       const resp = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiInputText, allowSplit: aiAllowSplit }),
+        body: JSON.stringify({ text: aiInputText, allowSplit: aiAllowSplit, improveText: aiImproveText }),
       });
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
@@ -1055,73 +1111,52 @@ Output HANYA JSON valid.`;
   };
   
   const exportSlide = async (slideIdx) => {
-    const node = canvasRefs.current[slideIdx];
-    if (!node) return;
+    try {
+      const node = canvasRefs.current[slideIdx];
+      if (!node) {
+        alert('Slide tidak ditemukan. Coba klik slide-nya dulu di preview.');
+        return;
+      }
 
-    const clone = node.cloneNode(true);
-    const styleEl = document.createElement('style');
-    styleEl.textContent = fontLink;
+      // Force render: scale 1 sementara untuk ekspor akurat
+      const dataUrl = await toPng(node, {
+        width: CANVAS_W,
+        height: CANVAS_H,
+        cacheBust: true,
+        pixelRatio: 1,
+        backgroundColor: '#FFFFFF',
+        skipFonts: false,
+        fontEmbedCSS: undefined, // biarkan auto-embed
+        style: {
+          // pastikan canvas dirender pada ukuran asli, abaikan scale dari preview
+          transform: 'none',
+          transformOrigin: 'top left',
+          margin: '0',
+        },
+      });
 
-    const svgNS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(svgNS, 'svg');
-    svg.setAttribute('xmlns', svgNS);
-    svg.setAttribute('width', CANVAS_W);
-    svg.setAttribute('height', CANVAS_H);
-    svg.setAttribute('viewBox', `0 0 ${CANVAS_W} ${CANVAS_H}`);
-
-    const fo = document.createElementNS(svgNS, 'foreignObject');
-    fo.setAttribute('width', '100%');
-    fo.setAttribute('height', '100%');
-
-    const wrap = document.createElement('div');
-    wrap.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
-    wrap.appendChild(styleEl);
-    wrap.appendChild(clone);
-    fo.appendChild(wrap);
-    svg.appendChild(fo);
-
-    const svgString = new XMLSerializer().serializeToString(svg);
-    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = url;
-    });
-
-    const canvas = document.createElement('canvas');
-    canvas.width = CANVAS_W;
-    canvas.height = CANVAS_H;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    ctx.drawImage(img, 0, 0, CANVAS_W, CANVAS_H);
-
-    URL.revokeObjectURL(url);
-
-    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
-    const dlUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = dlUrl;
-    a.download = `${profile.name}-slide-${slideIdx + 1}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(dlUrl);
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `${profile.name}-slide-${slideIdx + 1}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('Gagal export: ' + err.message);
+    }
   };
 
   const exportAll = async () => {
-    // Render off-screen semua slide
+    const startSlide = activeSlide;
     for (let i = 0; i < slides.length; i++) {
-      const prev = activeSlide;
       setActiveSlide(i);
-      await new Promise(r => setTimeout(r, 200));
+      // Tunggu canvas re-render
+      await new Promise(r => setTimeout(r, 400));
       await exportSlide(i);
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 300));
     }
+    setActiveSlide(startSlide);
   };
 
   // ============ RENDER ============
@@ -2005,6 +2040,44 @@ Output HANYA JSON valid.`;
                 >
                   <span>Boleh Carousel</span>
                   <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 400 }}>Pecah jika perlu</span>
+                </button>
+              </div>
+            </div>
+            
+            {/* Toggle: improve text or keep as-is */}
+            <div style={{
+              marginTop: 8, padding: 12, background: '#0F172A',
+              borderRadius: 8, border: '1px solid #334155',
+            }}>
+              <div style={{ fontSize: 11, color: '#94A3B8', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Teks
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => setAiImproveText(true)}
+                  style={{
+                    flex: 1, padding: '10px 12px',
+                    background: aiImproveText ? 'linear-gradient(135deg, #10B981, #059669)' : '#334155',
+                    color: '#fff', border: 'none', borderRadius: 6,
+                    fontWeight: 600, cursor: 'pointer', fontSize: 12,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                  }}
+                >
+                  <span>Perbaiki Teks</span>
+                  <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 400 }}>Edit typo, EYD, padatkan</span>
+                </button>
+                <button
+                  onClick={() => setAiImproveText(false)}
+                  style={{
+                    flex: 1, padding: '10px 12px',
+                    background: !aiImproveText ? 'linear-gradient(135deg, #F59E0B, #D97706)' : '#334155',
+                    color: '#fff', border: 'none', borderRadius: 6,
+                    fontWeight: 600, cursor: 'pointer', fontSize: 12,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                  }}
+                >
+                  <span>Apa Adanya</span>
+                  <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 400 }}>Pertahankan teks asli</span>
                 </button>
               </div>
             </div>
