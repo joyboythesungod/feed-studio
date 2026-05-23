@@ -6,7 +6,8 @@ import {
   Type, List, MessageSquareQuote, Sparkles, User, Palette,
   Bold, Italic, FileText, Layers, Copy, Upload, Wand2, Edit3,
   Settings, Menu, ChevronLeft, Smartphone, Monitor,
-  ZoomIn, ZoomOut, Crop, Move, RotateCcw, BookOpen, AlertCircle
+  ZoomIn, ZoomOut, Crop, Move, RotateCcw, BookOpen, AlertCircle,
+  GripVertical
 } from 'lucide-react';
 
 // ============ KONSTAN ============
@@ -636,6 +637,8 @@ export default function App() {
   ]);
   const [activeSlide, setActiveSlide] = useState(0);
   const [selectedBlockId, setSelectedBlockId] = useState(null);
+  const [draggingBlockIdx, setDraggingBlockIdx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiInputText, setAiInputText] = useState('');
   const [isProcessingAI, setIsProcessingAI] = useState(false);
@@ -826,6 +829,18 @@ export default function App() {
       if (newIdx < 0 || newIdx >= s.blocks.length) return s;
       const newBlocks = [...s.blocks];
       [newBlocks[idx], newBlocks[newIdx]] = [newBlocks[newIdx], newBlocks[idx]];
+      return { ...s, blocks: newBlocks };
+    }));
+  };
+  
+  // Reorder via drag-drop: pindah block dari `fromIdx` ke `toIdx`
+  const reorderBlocks = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setSlides(slides.map((s, i) => {
+      if (i !== activeSlide) return s;
+      const newBlocks = [...s.blocks];
+      const [moved] = newBlocks.splice(fromIdx, 1);
+      newBlocks.splice(toIdx, 0, moved);
       return { ...s, blocks: newBlocks };
     }));
   };
@@ -1425,19 +1440,17 @@ Output HANYA JSON valid.`;
         {isCanvasView && (
           <div className="scroll-thin" style={{ overflow: 'auto', padding: isMobile ? 12 : 24, background: '#0F172A' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-              {/* Block insert toolbar (manual mode) */}
-              {mode === 'manual' && (
-                <div style={{
-                  display: 'flex', gap: 4, background: '#1E293B', padding: 6, borderRadius: 10,
-                  border: '1px solid #334155', flexWrap: 'wrap', justifyContent: 'center',
-                }}>
-                  <ToolButton onClick={() => addBlock('heading')} icon={Type} label="Judul" />
-                  <ToolButton onClick={() => addBlock('paragraph')} icon={FileText} label="Paragraf" />
-                  <ToolButton onClick={() => addBlock('bullets')} icon={List} label="Bullet" />
-                  <ToolButton onClick={() => addBlock('callout')} icon={MessageSquareQuote} label="Callout" />
-                  <ToolButton onClick={() => addBlock('image')} icon={ImageIcon} label="Gambar" />
-                </div>
-              )}
+              {/* Block insert toolbar — available in BOTH modes */}
+              <div style={{
+                display: 'flex', gap: 4, background: '#1E293B', padding: 6, borderRadius: 10,
+                border: '1px solid #334155', flexWrap: 'wrap', justifyContent: 'center',
+              }}>
+                <ToolButton onClick={() => addBlock('heading')} icon={Type} label="Judul" />
+                <ToolButton onClick={() => addBlock('paragraph')} icon={FileText} label="Paragraf" />
+                <ToolButton onClick={() => addBlock('bullets')} icon={List} label="Bullet" />
+                <ToolButton onClick={() => addBlock('callout')} icon={MessageSquareQuote} label="Callout" />
+                <ToolButton onClick={() => addBlock('image')} icon={ImageIcon} label="Gambar" />
+              </div>
 
               {mode === 'ai' && (
                 <button
@@ -1541,24 +1554,73 @@ Output HANYA JSON valid.`;
             <SectionTitle icon={Layers} text="Block di Slide Ini" />
             {currentSlide.blocks.length === 0 && (
               <div style={{ color: '#64748B', fontSize: 12, padding: 14, textAlign: 'center', border: '1px dashed #334155', borderRadius: 8 }}>
-                {mode === 'ai' ? 'Pakai mode AI Auto untuk generate konten otomatis dari teks mentah.' : 'Tambahkan block dari toolbar di atas canvas.'}
+                Belum ada block. Tambahkan dari toolbar di atas canvas, atau pakai "Generate Otomatis" untuk AI auto-layout.
               </div>
             )}
-            {currentSlide.blocks.map((block) => (
+            {currentSlide.blocks.map((block, blockIdx) => (
               <div
                 key={block.id}
-                onClick={() => setSelectedBlockId(block.id)}
+                draggable
+                onDragStart={(e) => {
+                  setDraggingBlockIdx(blockIdx);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragEnd={() => {
+                  setDraggingBlockIdx(null);
+                  setDragOverIdx(null);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (draggingBlockIdx !== null && draggingBlockIdx !== blockIdx) {
+                    setDragOverIdx(blockIdx);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverIdx === blockIdx) setDragOverIdx(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggingBlockIdx !== null && draggingBlockIdx !== blockIdx) {
+                    reorderBlocks(draggingBlockIdx, blockIdx);
+                  }
+                  setDraggingBlockIdx(null);
+                  setDragOverIdx(null);
+                }}
+                onClick={() => setSelectedBlockId(selectedBlockId === block.id ? null : block.id)}
                 style={{
                   padding: 9, marginBottom: 6, borderRadius: 7,
                   background: selectedBlockId === block.id ? '#1E40AF' : '#0F172A',
                   cursor: 'pointer', fontSize: 12,
-                  border: selectedBlockId === block.id ? '1px solid #3B82F6' : '1px solid transparent',
+                  border: selectedBlockId === block.id 
+                    ? '1px solid #3B82F6' 
+                    : dragOverIdx === blockIdx
+                    ? '2px dashed #60A5FA'
+                    : '1px solid transparent',
+                  opacity: draggingBlockIdx === blockIdx ? 0.4 : 1,
+                  transform: dragOverIdx === blockIdx ? 'translateY(2px)' : 'none',
+                  transition: 'transform 0.15s, opacity 0.15s, border-color 0.15s',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: 10, color: '#94A3B8' }}>
-                    {block.type}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                    <span
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{
+                        cursor: 'grab', color: '#64748B',
+                        display: 'flex', alignItems: 'center', flexShrink: 0,
+                      }}
+                      title="Drag untuk pindah urutan"
+                    >
+                      <GripVertical size={12} />
+                    </span>
+                    <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: 10, color: '#94A3B8' }}>
+                      {block.type}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#64748B', marginLeft: 'auto', marginRight: 6 }}>
+                      {selectedBlockId === block.id ? '▼' : '▶'}
+                    </span>
+                  </div>
                   <div style={{ display: 'flex', gap: 2 }}>
                     <button onClick={(e) => { e.stopPropagation(); moveBlock(block.id, -1); }} style={iconBtnStyle}><ChevronUp size={11} /></button>
                     <button onClick={(e) => { e.stopPropagation(); moveBlock(block.id, 1); }} style={iconBtnStyle}><ChevronDown size={11} /></button>
@@ -1932,27 +1994,30 @@ Output HANYA JSON valid.`;
                       {FONT_OPTIONS.map(f => (<option key={f.name} value={f.name}>{f.name}</option>))}
                     </select>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
-                      <div>
-                        <Label text="Ukuran" />
-                        <input
-                          type="number"
-                          value={selectedBlock.size}
-                          onChange={e => updateBlock(selectedBlock.id, { size: Number(e.target.value) })}
-                          style={inputStyle}
-                        />
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                        <label style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>Ukuran</label>
+                        <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 700 }}>{selectedBlock.size}px</span>
                       </div>
-                      <div>
-                        <Label text="Weight" />
-                        <select
-                          value={selectedBlock.weight}
-                          onChange={e => updateBlock(selectedBlock.id, { weight: Number(e.target.value) })}
-                          style={inputStyle}
-                        >
-                          {[300, 400, 500, 600, 700, 800].map(w => <option key={w}>{w}</option>)}
-                        </select>
-                      </div>
+                      <input
+                        type="range"
+                        min={selectedBlock.type === 'heading' ? 30 : 16}
+                        max={selectedBlock.type === 'heading' ? 120 : 80}
+                        step={1}
+                        value={selectedBlock.size}
+                        onChange={e => updateBlock(selectedBlock.id, { size: Number(e.target.value) })}
+                        style={{ width: '100%', accentColor: '#3B82F6' }}
+                      />
                     </div>
+
+                    <Label text="Weight" />
+                    <select
+                      value={selectedBlock.weight}
+                      onChange={e => updateBlock(selectedBlock.id, { weight: Number(e.target.value) })}
+                      style={inputStyle}
+                    >
+                      {[300, 400, 500, 600, 700, 800].map(w => <option key={w}>{w}</option>)}
+                    </select>
 
                     <Label text="Warna" />
                     <input
